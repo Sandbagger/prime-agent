@@ -317,6 +317,31 @@ impl TurnRunner {
         let Some((first, batched)) = items.split_first() else {
             return;
         };
+        let operator_prompt = self.core.lock().unwrap().rlm_depth == 0
+            && first.policy != super::queue::TurnPolicy::Injected
+            && first.custom_message.is_none()
+            && first.agent_message.is_none()
+            && first.queue_key.is_none();
+        if operator_prompt {
+            if let Err(error) = pa_ai::native_policy::rearm_operator_prompt().await {
+                eprintln!("substrate prompt admission failed: {error}");
+            }
+        }
+        // Capture trusted root identity before events; socket I/O stays on the pump task.
+        if pa_ai::native_policy::enabled() {
+            let (provider, model) = engine.model_identity();
+            let thinking = engine.effective_thinking_level();
+            let core = self.core.lock().unwrap();
+            if core.rlm_depth == 0 {
+                if let Some(store) = &core.store {
+                    self.events.telemetry_begin(json!({
+                        "sessionId":store.session_id(),"activeSessionId":core.active_session_id,
+                        "sessionFile":store.path,"cwd":core.cwd,"provider":provider,"model":model,
+                        "thinkingLevel":thinking
+                    }), &first.message, first.images.len());
+                }
+            }
+        }
         self.emit_turn_event(json!({ "type": "agent_start" }));
         self.emit_turn_event(json!({ "type": "turn_start" }));
         // The pane reporter's run boundary (TS `agent_start`): working.
@@ -1030,6 +1055,8 @@ impl TurnRunner {
         if !engine_reported_run_end && !abort_gate_armed.load(std::sync::atomic::Ordering::SeqCst) {
             self.emit_turn_event(json!({ "type": "agent_end" }));
         }
+        self.events
+            .telemetry_close(!abort_gate_armed.load(std::sync::atomic::Ordering::SeqCst));
         {
             // The settle's boundary state: the run's own `agent_end`
             // already reported (inside the emit closure) — the pane

@@ -10,6 +10,9 @@ use super::{
     DAEMON_SCHEMA_REVISION, DEFAULT_PRIVATE_FRAME_LIMITS, PEER_COMMAND_NOT_ALLOWED,
 };
 
+#[path = "native_telemetry.rs"]
+mod native_telemetry;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AuthOutcome {
     Authenticated,
@@ -71,6 +74,7 @@ pub(crate) struct EventPump {
     events: broadcast::Sender<Arc<OutboundFrame>>,
     next_seq: AtomicU64,
     send_guard: std::sync::Mutex<()>,
+    telemetry: std::sync::Mutex<Option<native_telemetry::Telemetry>>,
 }
 
 impl EventPump {
@@ -80,6 +84,7 @@ impl EventPump {
             events,
             next_seq: AtomicU64::new(0),
             send_guard: std::sync::Mutex::new(()),
+            telemetry: std::sync::Mutex::new(None),
         }
     }
 
@@ -90,7 +95,35 @@ impl EventPump {
     pub(crate) fn send(&self, mut frame: OutboundFrame) {
         let _guard = self.send_guard.lock().unwrap();
         frame.seq = self.next_seq.fetch_add(1, Ordering::SeqCst) + 1;
+        if let Some(telemetry) = self.telemetry.lock().unwrap().as_mut() {
+            if let Ok(value) = serde_json::from_slice::<Value>(&frame.payload) {
+                if let Some(event) = native_telemetry::event_fact(&value) {
+                    telemetry.event(event);
+                }
+            }
+        }
         let _ = self.events.send(Arc::new(frame));
+    }
+
+    pub(crate) fn telemetry_begin(&self, binding: Value, prompt: &str, image_count: usize) {
+        let _guard = self.send_guard.lock().unwrap();
+        let mut slot = self.telemetry.lock().unwrap();
+        if slot.is_none() {
+            *slot = native_telemetry::Telemetry::new();
+        }
+        if let Some(telemetry) = slot.as_mut() {
+            telemetry.begin(binding, prompt, image_count);
+        }
+    }
+
+    pub(crate) fn telemetry_close(&self, completed: bool) {
+        let _guard = self.send_guard.lock().unwrap();
+        if let Some(telemetry) = self.telemetry.lock().unwrap().as_ref() {
+            telemetry.send(
+                "telemetry_close",
+                json!({"completed":completed,"reason":"native_turn_settled"}),
+            );
+        }
     }
 
     /// The current broadcast sequence: a response written now must wait for
