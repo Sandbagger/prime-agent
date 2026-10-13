@@ -175,14 +175,23 @@ mod tests {
         for ended in [false, true] {
             let (sender, mut receiver) = tokio::sync::mpsc::channel(4);
             let mut telemetry = Telemetry {
-                sender, failed: Arc::new(AtomicBool::new(false)), generation: String::new(),
-                active_session_id: String::new(), sequence: 0, ended: false, task: None,
+                sender,
+                failed: Arc::new(AtomicBool::new(false)),
+                generation: String::new(),
+                active_session_id: String::new(),
+                sequence: 0,
+                ended: false,
+                task: None,
             };
             telemetry.begin(json!({"activeSessionId":"root"}), "prompt", 0);
-            if ended { telemetry.event(json!({"type":"agent_end","messages":[]})); }
+            if ended {
+                telemetry.event(json!({"type":"agent_end","messages":[]}));
+            }
             telemetry.close().await;
             assert_eq!(receiver.recv().await.unwrap().0, "telemetry_begin");
-            if ended { assert_eq!(receiver.recv().await.unwrap().0, "telemetry_event"); }
+            if ended {
+                assert_eq!(receiver.recv().await.unwrap().0, "telemetry_event");
+            }
             let (op, body) = receiver.recv().await.unwrap();
             assert_eq!(op, "telemetry_close");
             assert_eq!(body["completed"], ended);

@@ -193,6 +193,13 @@ async fn run_session_command(
         return Err(error.clone());
     }
     if let Some(continuation) = execution.continuation_message {
+        state
+            .session
+            .observer
+            .lock()
+            .await
+            .begin(&engine, &command.text, 0)
+            .await?;
         engine
             .session
             .prompt_injected_message(&continuation)

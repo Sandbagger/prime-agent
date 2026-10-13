@@ -1279,6 +1279,7 @@ async fn run_prompts_and_emit(
             // A `/goal` start scheduled its continuation as queued session input: the prompt wait
             // drains it inside the same wait.
             if let Some(continuation) = execution.continuation_message {
+                observer.begin(engine, &command.text, 0).await?;
                 goal.run_session_command_continuation(
                     engine,
                     &mut boundary,

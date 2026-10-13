@@ -28,9 +28,7 @@ impl Observer {
                             if let Some(frame) =
                                 pa_core::session_engine::session_events::agent_event_json(&event)
                             {
-                                if let Some(fact) = crate::native_telemetry::event_fact(
-                                    &json!({"type":"session_event","event":frame}),
-                                ) {
+                                if let Some(fact) = local_event_fact(&frame) {
                                     if let Some(queue) = queue.lock().unwrap().as_mut() {
                                         queue.event(fact);
                                     }
