@@ -159,6 +159,7 @@ impl RlmSubagentHost for SupervisorChildSessions {
                     replied_since_task: false,
                     notice_delivered: false,
                     prompt_admitted: false,
+                    collect_kickoff: Arc::new(tokio::sync::Notify::new()),
                     error: None,
                     closed_by_parent: false,
                     session_file: created.session_file.clone(),
@@ -238,15 +239,18 @@ impl RlmSubagentHost for SupervisorChildSessions {
             // admission happens mid-turn, so the parent's continuation
             // request reaches the provider first (see `wait_turn_done`).
             let turn_generation = *this.turn_done.subscribe().borrow();
+            let collect_kickoff = Arc::clone(&record.lock().await.collect_kickoff);
             tokio::spawn(async move {
-                watcher_this.wait_turn_done(turn_generation).await;
+                tokio::select! {
+                    () = watcher_this.wait_turn_done(turn_generation) => {},
+                    () = collect_kickoff.notified() => {},
+                }
                 // The parent closed before the prompt admitted: the
                 // child is closed with it, so the detached task prompt
                 // never fires.
                 if watcher_record.lock().await.closed_by_parent {
                     return;
                 }
-                watcher_record.lock().await.prompt_admitted = true;
                 if let Err(error) = watcher_this
                     .prompt_child(
                         &child_active_session_id,
@@ -291,6 +295,7 @@ impl RlmSubagentHost for SupervisorChildSessions {
                         return;
                     }
                 }
+                watcher_record.lock().await.prompt_admitted = true;
                 watcher_this.watch_child_settle(&watcher_record).await;
             });
             Ok(RlmSpawnHandle {
@@ -543,6 +548,13 @@ impl RlmSubagentHost for SupervisorChildSessions {
                 records.push(record);
             }
             let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+            // Only explicitly collected children bypass detached turn ordering.
+            // notify_one retains its permit if the kickoff task has not polled yet.
+            if timeout_ms > 0 {
+                for record in &records {
+                    record.lock().await.collect_kickoff.notify_one();
+                }
+            }
             let mut results = Vec::with_capacity(records.len());
             for record in &records {
                 this.refresh_record(record).await;
@@ -555,14 +567,21 @@ impl RlmSubagentHost for SupervisorChildSessions {
                         SupervisorChildSessionsInner::arm_usage_watch(&this, record).await;
                     }
                 }
-                let still_running = record.lock().await.settled_status.is_none();
-                if still_running {
-                    // Wait inside the shared budget, then re-read the child:
-                    // a timeout yields the current snapshot, never an error.
+                loop {
+                    // Register before observing settlement so a racing terminal
+                    // notice cannot be lost. The funnel also releases the grant.
+                    let changed = this.settle_notify.notified();
+                    tokio::pin!(changed);
+                    changed.as_mut().enable();
+                    if record.lock().await.settled {
+                        break;
+                    }
                     let remaining = deadline.saturating_duration_since(Instant::now());
-                    let active_session_id = record.lock().await.active_session_id.clone();
-                    this.wait_for_child(&active_session_id, remaining).await;
-                    this.refresh_record(record).await;
+                    if remaining.is_zero()
+                        || tokio::time::timeout(remaining, changed).await.is_err()
+                    {
+                        break;
+                    }
                 }
                 let result = {
                     let record = record.lock().await;

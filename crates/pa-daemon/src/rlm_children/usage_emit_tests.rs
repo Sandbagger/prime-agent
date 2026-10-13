@@ -43,6 +43,7 @@ fn record_with_file(child_id: &str, session_file: &Path) -> Arc<Mutex<ChildRecor
         replied_since_task: false,
         notice_delivered: false,
         prompt_admitted: true,
+        collect_kickoff: Arc::new(tokio::sync::Notify::new()),
         error: None,
         closed_by_parent: false,
         session_file: Some(session_file.display().to_string()),

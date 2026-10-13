@@ -380,6 +380,7 @@ fn ledger_child_records(
             replied_since_task: false,
             notice_delivered: true,
             prompt_admitted: true,
+            collect_kickoff: Arc::new(tokio::sync::Notify::new()),
             error: None,
             closed_by_parent: false,
             session_file: Some(edge.child),

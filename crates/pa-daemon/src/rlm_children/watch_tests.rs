@@ -308,6 +308,61 @@ async fn spawn_child(sessions: &SupervisorChildSessions) -> RlmSpawnHandle {
 }
 
 #[tokio::test]
+async fn collect_admits_and_settles_child_before_parent_turn_finishes() {
+    let (follow_up_tx, _follow_up_rx) = mpsc::unbounded_channel();
+    let (sessions, _kill_rx) =
+        sessions_with_fake_supervisor(follow_up_tx, 0, FakeKill::Success, FakeChild::Healthy).await;
+    let handle = spawn_child(&sessions).await;
+    // No notify_turn_done: collect is called inside the spawning Python cell.
+    let results = tokio::time::timeout(
+        Duration::from_secs(2),
+        sessions.collect(vec![handle.rlm_child_id], 1_000),
+    )
+    .await
+    .expect("collect respects its deadline")
+    .expect("collect succeeds");
+    assert_eq!(results.len(), 1);
+    assert!(
+        results[0].settled,
+        "explicit collect must start and settle the child in this turn"
+    );
+    assert_eq!(results[0].status, "done");
+}
+
+#[tokio::test]
+async fn collect_in_spawning_turn_reports_prompt_failure() {
+    let (follow_up_tx, _follow_up_rx) = mpsc::unbounded_channel();
+    let (sessions, _kill_rx) =
+        sessions_with_fake_supervisor(follow_up_tx, 0, FakeKill::Success, FakeChild::PromptFails)
+            .await;
+    let handle = spawn_child(&sessions).await;
+    let results = sessions
+        .collect(vec![handle.rlm_child_id], 1_000)
+        .await
+        .unwrap();
+    assert!(results[0].settled);
+    assert_eq!(results[0].status, "error");
+}
+
+#[tokio::test]
+async fn collect_timeout_preserves_running_snapshot() {
+    let (follow_up_tx, _follow_up_rx) = mpsc::unbounded_channel();
+    let (sessions, _kill_rx) =
+        sessions_with_fake_supervisor(follow_up_tx, 0, FakeKill::Success, FakeChild::Unreachable)
+            .await;
+    let handle = spawn_child(&sessions).await;
+    let results = tokio::time::timeout(
+        Duration::from_secs(1),
+        sessions.collect(vec![handle.rlm_child_id], 10),
+    )
+    .await
+    .expect("bounded collect")
+    .unwrap();
+    assert!(!results[0].settled);
+    assert_eq!(results[0].status, "running");
+}
+
+#[tokio::test]
 async fn roster_snapshot_does_not_wait_for_a_slow_child_worker() {
     let (follow_up_tx, _follow_up_rx) = mpsc::unbounded_channel();
     let (sessions, _kill_rx) =
@@ -1038,6 +1093,7 @@ fn an_already_settled_child_never_re_scores_as_an_unreachable_error() {
         replied_since_task: false,
         notice_delivered: false,
         prompt_admitted: true,
+        collect_kickoff: Arc::new(tokio::sync::Notify::new()),
         error: None,
         closed_by_parent: false,
         session_file: None,

@@ -153,6 +153,8 @@ struct ChildRecord {
     /// The task prompt was admitted; never settle a pre-prompt child (it
     /// is idle with an empty queue by construction).
     prompt_admitted: bool,
+    /// Explicit bounded collect may release this child before the parent turn ends.
+    collect_kickoff: Arc<tokio::sync::Notify>,
     /// Terminal error text: the cancel reason for a cancelled run, the
     /// failure text for a failed one.
     error: Option<String>,
@@ -655,6 +657,7 @@ impl SupervisorChildSessions {
                 replied_since_task: false,
                 notice_delivered: false,
                 prompt_admitted: true,
+                collect_kickoff: Arc::new(tokio::sync::Notify::new()),
                 error: None,
                 closed_by_parent: false,
                 session_file: None,
