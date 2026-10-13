@@ -55,3 +55,9 @@ if __name__=="__main__":
     for failed in (False, True): run(sys.argv[1],failed)
 
     run(sys.argv[1],False,goal_only=True)
+
+    with tempfile.TemporaryDirectory(prefix="headless-key-", dir="/tmp") as directory:
+        env={"PATH":os.environ["PATH"],"HOME":directory,"DOTFILES_PRIME_NATIVE_SOCKET":directory+"/policy.sock","DOTFILES_PRIME_POLICY_SECRET":"fixture"}
+        result=subprocess.run([sys.argv[1],"--print","--daemon-socket",directory+"/absent.sock","--api-key","fixture","hello"],env=env,cwd=directory,text=True,capture_output=True,timeout=10)
+        assert result.returncode==1 and "--api-key is unsupported" in result.stderr, (result.returncode,result.stderr)
+        print("daemon headless explicit API key rejected before connection")
