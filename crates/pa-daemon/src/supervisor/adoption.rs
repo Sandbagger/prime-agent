@@ -692,6 +692,22 @@ impl Supervisor {
                 self.log_line(&format!("failed to append RLM ledger spawn: {error:#}"));
             })?;
         let display = crate::rlm_ledger::RlmSubagentDisplayEntry {
+            rlm_depth: config
+                .as_ref()
+                .and_then(|value| value.get("rlmDepth"))
+                .and_then(Value::as_u64)
+                .and_then(|value| u32::try_from(value).ok()),
+            rlm_max_depth: config
+                .as_ref()
+                .and_then(|value| value.get("rlmMaxDepth"))
+                .and_then(Value::as_u64)
+                .and_then(|value| u32::try_from(value).ok()),
+            thinking: config
+                .as_ref()
+                .and_then(|value| value.get("thinking"))
+                .and_then(Value::as_str)
+                .filter(|value| pa_ai::models::thinking_level_from_str(value).is_some())
+                .map(str::to_owned),
             type_tag: "rlm_subagent".to_string(),
             child_id,
             session_name,

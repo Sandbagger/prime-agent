@@ -170,6 +170,9 @@ async fn reseed_lists_live_ledger_children_settled_and_bills_only_after_a_delive
     ] {
         crate::rlm_ledger::write_rlm_subagent_display(
             &crate::rlm_ledger::RlmSubagentDisplayEntry {
+                rlm_depth: Some(1),
+                rlm_max_depth: Some(1),
+                thinking: Some("medium".into()),
                 type_tag: "rlm_subagent".to_string(),
                 child_id: child_id.to_string(),
                 session_name: child_id.to_string(),

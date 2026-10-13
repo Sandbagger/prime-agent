@@ -375,6 +375,9 @@ fn display_entries_round_trip_and_tombstones_stick() {
     let child_dir = dir.join("sub-1");
     fs::create_dir_all(&child_dir).unwrap();
     let entry = RlmSubagentDisplayEntry {
+        rlm_depth: Some(1),
+        rlm_max_depth: Some(1),
+        thinking: Some("medium".into()),
         type_tag: "rlm_subagent".into(),
         child_id: "sub-1".into(),
         session_name: "w".into(),
@@ -391,6 +394,13 @@ fn display_entries_round_trip_and_tombstones_stick() {
     let read = read_rlm_subagent_display(&child_dir).unwrap();
     assert_eq!(read.child_id, "sub-1");
     assert_eq!(read.prompt.as_deref(), Some("do work"));
+    let wire: Value =
+        serde_json::from_str(&fs::read_to_string(child_dir.join("rlm-subagent.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        json!({"rlmDepth": wire["rlmDepth"], "rlmMaxDepth": wire["rlmMaxDepth"], "thinking": wire["thinking"]}),
+        json!({"rlmDepth": 1, "rlmMaxDepth": 1, "thinking": "medium"})
+    );
     let mut tombstone = entry.clone();
     tombstone.status = "deleted".into();
     assert!(write_rlm_subagent_display(&tombstone).unwrap());
@@ -403,6 +413,9 @@ fn display_entry_file_is_owner_only() {
     let child_dir = dir.join("sub-1");
     fs::create_dir_all(&child_dir).unwrap();
     let entry = RlmSubagentDisplayEntry {
+        rlm_depth: Some(1),
+        rlm_max_depth: Some(1),
+        thinking: Some("medium".into()),
         type_tag: "rlm_subagent".into(),
         child_id: "sub-1".into(),
         session_name: "w".into(),

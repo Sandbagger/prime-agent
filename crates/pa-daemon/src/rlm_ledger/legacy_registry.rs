@@ -45,6 +45,14 @@ pub struct LegacyRlmSubagentEntry {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RlmSubagentDisplayEntry {
+    /// Launch policy facts copied from the admitted child configuration.
+    /// Absent for old entries; absence must never imply a permissive default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rlm_depth: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rlm_max_depth: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<String>,
     /// Always `rlm_subagent`; a file of any other type is not a display entry and reads as absent.
     #[serde(default, rename = "type")]
     pub type_tag: String,
