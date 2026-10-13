@@ -25,7 +25,7 @@ def run(binary, failed, goal_only=False):
                         elif kind=="get_session_header": data={"header":{"type":"session","id":"durable-root"}}
                         elif kind=="prompt_and_wait":
                             send({"type":"session_event","activeSessionId":"root-active","event":{"type":"message_end","message":message}})
-                        elif kind=="get_messages": data={"messages":[message]}
+                        elif kind=="get_messages": data={"messages":[{"role":"custom","customType":"rlm_child_terminal_notice","content":"child settled","display":True,"timestamp":"2026-10-13T17:31:20.444Z"},message]}
                         send({"type":"response","id":request["id"],"command":kind,"success":True,"data":data})
             except Exception as error: errors.append(repr(error))
         thread=threading.Thread(target=serve); thread.start()
@@ -33,7 +33,7 @@ def run(binary, failed, goal_only=False):
             "DOTFILES_PRIME_POLICY_SECRET":"fixture","PRIME_AGENT_FAUX_SCRIPT":json.dumps({"responses":["wrong local host"]})}
         try:
             result=subprocess.run([binary,"--print","--mode","json","--daemon-socket",str(path),"--no-tools",
-                "--provider","faux","--model","faux-1","--goal","fixture goal"] + ([] if goal_only else ["hello"]), env=env,cwd=root,text=True,capture_output=True,timeout=15)
+                "--provider","faux","--model","faux-1","--models","faux/faux-1","--goal","fixture goal"] + ([] if goal_only else ["hello"]), env=env,cwd=root,text=True,capture_output=True,timeout=15)
             thread.join(11)
             assert not errors, errors
             assert result.returncode==(1 if failed else 0), (result.returncode,result.stderr)
@@ -43,6 +43,7 @@ def run(binary, failed, goal_only=False):
             create=commands[0]["config"]
             assert create["noTools"] is True and create["executionMode"]=="json", create
             assert create["initialGoal"]["objective"]=="fixture goal", create
+            assert create["models"]==["faux/faux-1"], create
             expected = ["create","attach","get_system_prompt","get_session_header","get_messages"] if goal_only else ["create","attach","get_session_header","prompt_and_wait","wait_for_headless_completion","get_messages"]
             assert [c["type"] for c in commands]==expected, commands
             if not goal_only: assert commands[-2]["waitForRlmQuiescence"] is True

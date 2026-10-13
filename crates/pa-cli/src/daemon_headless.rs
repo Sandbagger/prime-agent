@@ -106,8 +106,18 @@ pub(crate) fn run(options: &RunOptions) -> Result<i32> {
         )?)?;
     }
     let data = accepted(client.request(command("get_messages", &session, json!({}))?)?)?;
-    let messages: Vec<pa_types::session::AgentMessage> =
-        serde_json::from_value(data.get("messages").cloned().unwrap_or_else(|| json!([])))?;
+    let mut wire_messages = data.get("messages").cloned().unwrap_or_else(|| json!([]));
+    // Durable custom rows retain their ISO entry timestamp; the terminal
+    // selector consumes the core message shape with epoch milliseconds.
+    // Only normalize this private projection, never the streamed JSON ABI.
+    if let Some(messages) = wire_messages.as_array_mut() {
+        for message in messages {
+            if let Some(timestamp) = message.get("timestamp").and_then(Value::as_str) {
+                message["timestamp"] = json!(pa_core::session::timestamp_to_millis(timestamp));
+            }
+        }
+    }
+    let messages: Vec<pa_types::session::AgentMessage> = serde_json::from_value(wire_messages)?;
     let result = pa_core::session_engine::headless::select_headless_terminal_result(&messages);
     let mut exit_code = 0;
     if let Some(primary) = result.primary {
