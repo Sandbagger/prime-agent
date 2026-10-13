@@ -10,8 +10,7 @@ use super::{
     DAEMON_SCHEMA_REVISION, DEFAULT_PRIVATE_FRAME_LIMITS, PEER_COMMAND_NOT_ALLOWED,
 };
 
-#[path = "native_telemetry.rs"]
-mod native_telemetry;
+use crate::native_telemetry;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AuthOutcome {

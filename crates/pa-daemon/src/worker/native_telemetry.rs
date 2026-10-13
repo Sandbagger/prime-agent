@@ -5,16 +5,18 @@ use std::sync::{
     Arc,
 };
 
-pub(super) struct Telemetry {
+pub struct Telemetry {
     sender: tokio::sync::mpsc::Sender<(&'static str, Value)>,
     failed: Arc<AtomicBool>,
     generation: String,
     active_session_id: String,
     sequence: u64,
+    ended: bool,
+    task: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl Telemetry {
-    pub(super) fn new() -> Option<Self> {
+    pub fn new() -> Option<Self> {
         if !pa_ai::native_policy::enabled() {
             return None;
         }
@@ -22,7 +24,7 @@ impl Telemetry {
         let (sender, mut receiver) = tokio::sync::mpsc::channel::<(&'static str, Value)>(256);
         let failed = Arc::new(AtomicBool::new(false));
         let failure = Arc::clone(&failed);
-        runtime.spawn(async move {
+        let task = runtime.spawn(async move {
             while let Some((op, body)) = receiver.recv().await {
                 if failure.load(Ordering::SeqCst) {
                     let _ = pa_ai::native_policy::request_telemetry(
@@ -58,12 +60,33 @@ impl Telemetry {
             generation: String::new(),
             active_session_id: String::new(),
             sequence: 0,
+            ended: false,
+            task: Some(task),
         })
     }
 
-    pub(super) fn begin(&mut self, mut binding: Value, prompt: &str, image_count: usize) {
+    /// Drain the bounded queue before a standalone host tears down its runtime.
+    pub async fn close(self) {
+        self.send(
+            "telemetry_close",
+            json!({"completed":self.ended,"reason":"native_host_closed"}),
+        );
+        drop(self.sender);
+        if let Some(mut task) = self.task {
+            if tokio::time::timeout(std::time::Duration::from_secs(5), &mut task)
+                .await
+                .is_err()
+            {
+                task.abort();
+                eprintln!("substrate telemetry close timed out; observation interrupted");
+            }
+        }
+    }
+
+    pub fn begin(&mut self, mut binding: Value, prompt: &str, image_count: usize) {
         self.generation = uuid::Uuid::new_v4().to_string();
         self.sequence = 0;
+        self.ended = false;
         self.active_session_id = binding["activeSessionId"]
             .as_str()
             .unwrap_or_default()
@@ -75,12 +98,17 @@ impl Telemetry {
         );
     }
 
-    pub(super) fn event(&mut self, event: Value) {
+    pub fn event(&mut self, event: Value) {
+        match event.get("type").and_then(Value::as_str) {
+            Some("agent_end") => self.ended = true,
+            Some("agent_start") => self.ended = false,
+            _ => {}
+        }
         self.sequence += 1;
         self.send("telemetry_event", json!({"frame":{"type":"session_event","activeSessionId":self.active_session_id,"event":event,"meta":{"cursor":{"generation":self.generation,"sequence":self.sequence}}}}));
     }
 
-    pub(super) fn send(&self, op: &'static str, body: Value) {
+    pub fn send(&self, op: &'static str, body: Value) {
         if !self.failed.load(Ordering::SeqCst) && self.sender.try_send((op, body)).is_err() {
             eprintln!("substrate telemetry queue overflow; turn observation interrupted");
             self.failed.store(true, Ordering::SeqCst);
@@ -89,7 +117,7 @@ impl Telemetry {
 }
 
 /// Only lifecycle facts are copied; streamed prose and tool arguments stay private.
-pub(super) fn event_fact(frame: &Value) -> Option<Value> {
+pub fn event_fact(frame: &Value) -> Option<Value> {
     if frame.get("type").and_then(Value::as_str) != Some("session_event") {
         return None;
     }
@@ -142,6 +170,25 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn host_close_requires_terminal_event_and_preserves_queue_order() {
+        for ended in [false, true] {
+            let (sender, mut receiver) = tokio::sync::mpsc::channel(4);
+            let mut telemetry = Telemetry {
+                sender, failed: Arc::new(AtomicBool::new(false)), generation: String::new(),
+                active_session_id: String::new(), sequence: 0, ended: false, task: None,
+            };
+            telemetry.begin(json!({"activeSessionId":"root"}), "prompt", 0);
+            if ended { telemetry.event(json!({"type":"agent_end","messages":[]})); }
+            telemetry.close().await;
+            assert_eq!(receiver.recv().await.unwrap().0, "telemetry_begin");
+            if ended { assert_eq!(receiver.recv().await.unwrap().0, "telemetry_event"); }
+            let (op, body) = receiver.recv().await.unwrap();
+            assert_eq!(op, "telemetry_close");
+            assert_eq!(body["completed"], ended);
+        }
+    }
+
     #[test]
     fn queue_preserves_dedicated_sequence_and_detects_overflow() {
         let (sender, mut receiver) = tokio::sync::mpsc::channel(2);
@@ -151,6 +198,8 @@ mod tests {
             generation: String::new(),
             active_session_id: String::new(),
             sequence: 0,
+            ended: false,
+            task: None,
         };
         telemetry.begin(json!({"activeSessionId":"root"}), "prompt", 0);
         telemetry.event(json!({"type":"agent_start"}));

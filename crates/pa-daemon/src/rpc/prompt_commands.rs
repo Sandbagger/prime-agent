@@ -34,6 +34,15 @@ pub async fn prompt(state: &Arc<RpcState>, payload: &Value) -> Result<ResponseDa
     let behavior = protocol::command_streaming_behavior(payload);
     let handle = state.session.handle().await;
     let engine = handle.engine.clone();
+    if engine.session.classify_session_command(message).is_none() {
+        state
+            .session
+            .observer
+            .lock()
+            .await
+            .begin(&engine, message, images.len())
+            .await?;
+    }
     let admission = engine
         .session
         .prompt_with_images(

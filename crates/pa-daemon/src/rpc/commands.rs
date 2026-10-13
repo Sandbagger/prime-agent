@@ -182,12 +182,22 @@ pub async fn handle_command(state: &Arc<RpcState>, command: protocol::RpcCommand
     let id = command.id.clone();
     let payload = command.payload.clone();
     let name = command.command.as_str();
+    if pa_ai::native_policy::enabled() && crate::native_standalone::authority_change(name) {
+        return protocol::error(
+            id.as_ref(),
+            name,
+            "substrate launch authority is immutable; start a new launch",
+        );
+    }
     let outcome: Result<ResponseData, String> = match name {
         "prompt" => prompt_commands::prompt(state, &payload).await,
         "steer" | "follow_up" => prompt_commands::steer_or_follow_up(state, &payload, name).await,
         "abort" => {
             state.session.handle().await.engine.session.agent().abort();
             state.pump_suspended.store(true, Ordering::SeqCst);
+            if let Err(error) = pa_ai::native_policy::cancel_operator_prompt().await {
+                return protocol::error(id.as_ref(), name, &error);
+            }
             Ok(ResponseData::Absent)
         }
         "new_session" => new_session(state, &payload).await,

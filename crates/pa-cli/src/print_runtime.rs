@@ -403,7 +403,17 @@ async fn print_mode_main(
             .await
             .map_err(|error| format!("{error:#}"))?;
     }
-    run_prompts_and_emit(&engine, &headless.model, headless.api_key.clone(), options).await
+    let mut observer = pa_daemon::native_standalone::Observer::attach(&engine).await;
+    let result = run_prompts_and_emit(
+        &engine,
+        &headless.model,
+        headless.api_key.clone(),
+        options,
+        &observer,
+    )
+    .await;
+    observer.close().await;
+    result
 }
 
 /// Assemble the in-process session engine for a headless run: model
@@ -1189,6 +1199,7 @@ async fn run_prompts_and_emit(
     model: &Model,
     api_key: Option<String>,
     options: &RunOptions,
+    observer: &pa_daemon::native_standalone::Observer,
 ) -> Result<i32, String> {
     let json_mode = options.app_mode == AppMode::Json;
     let mut unsubscribe: Option<pa_agent::agent::Subscription> = None;
@@ -1290,6 +1301,7 @@ async fn run_prompts_and_emit(
             .await?;
             continue;
         }
+        observer.begin(engine, prompt, images.len()).await?;
         boundary
             .run_pre_turn(engine, model, api_key.clone())
             .await?;

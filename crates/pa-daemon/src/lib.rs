@@ -128,3 +128,7 @@ pub(crate) mod worker_stderr;
 pub(crate) mod test_support;
 #[cfg(test)]
 pub(crate) mod trace_test_env;
+
+pub mod native_standalone;
+#[path = "worker/native_telemetry.rs"]
+pub mod native_telemetry;

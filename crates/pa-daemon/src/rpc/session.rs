@@ -58,6 +58,7 @@ pub type RpcEngineFactory = Arc<
 
 /// The live session state one RPC connection drives.
 pub struct RpcSession {
+    pub(crate) observer: tokio::sync::Mutex<crate::native_standalone::Observer>,
     handle: Arc<tokio::sync::RwLock<RpcEngineHandle>>,
     writer: LineWriter,
     factory: Option<RpcEngineFactory>,
@@ -86,7 +87,9 @@ impl RpcSession {
         factory: Option<RpcEngineFactory>,
         writer: LineWriter,
     ) -> Self {
+        let observer = crate::native_standalone::Observer::attach(&handle.engine).await;
         let session = Self {
+            observer: tokio::sync::Mutex::new(observer),
             handle: Arc::new(tokio::sync::RwLock::new(handle)),
             writer,
             factory,
@@ -374,6 +377,7 @@ impl RpcSession {
         if let Some(subscription) = self.subscription.lock().await.take() {
             subscription.unsubscribe().await;
         }
+        self.observer.lock().await.close().await;
         engine.dispose_kernel().await;
     }
 }
