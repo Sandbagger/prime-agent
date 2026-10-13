@@ -170,7 +170,16 @@ fn mcp_gating_blocking(
 ///
 /// Panics if the MCP manager mutex is poisoned while wiring telemetry
 /// reporting.
-pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<SessionEngine> {
+pub async fn create_session(config: SessionEngineConfig) -> anyhow::Result<SessionEngine> {
+    create_session_with_tool_policy(config, true).await
+}
+
+/// Assemble a local host with an explicit tool-exposure policy. Disabling tools
+/// also prevents injected ipython and snapshot-triggered kernel prewarm.
+pub async fn create_session_with_tool_policy(
+    mut config: SessionEngineConfig,
+    tools_enabled: bool,
+) -> anyhow::Result<SessionEngine> {
     let cwd = config.cwd.clone();
     // Session persistence first: the conversation-log path and the resume
     // context both come from the session manager.
@@ -415,8 +424,12 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         on_unavailable_skills,
         on_bootstrap_result,
     );
-    let mut tools = config.tools.clone();
-    if !tools.iter().any(|tool| tool.name() == "ipython") {
+    let mut tools = if tools_enabled {
+        config.tools.clone()
+    } else {
+        Vec::new()
+    };
+    if tools_enabled && !tools.iter().any(|tool| tool.name() == "ipython") {
         let definition = crate::tools::ipython::create_ipython_tool_definition(
             &cwd.to_string_lossy(),
             super::runtime_wiring::ipython_tool_options(
@@ -924,3 +937,29 @@ impl SessionEngine {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod substrate_tool_policy_tests {
+    #[tokio::test]
+    async fn disabled_tools_excludes_injected_ipython_and_its_prompt() {
+        let home = tempfile::TempDir::new().unwrap();
+        let engine = super::create_session_with_tool_policy(
+            super::SessionEngineConfig {
+                cwd: home.path().to_path_buf(),
+                agent_dir: home.path().join("agent"),
+                model: Some(pa_agent::types::Model::unknown()),
+                stream_fn: Some(std::sync::Arc::new(|_, _, _| {
+                    Box::pin(async { anyhow::bail!("fixture must not call provider") })
+                })),
+                prewarm_ipython_kernel: Some(true),
+                ..Default::default()
+            },
+            false,
+        )
+        .await
+        .unwrap();
+        assert!(engine.session.agent().state().await.tools.is_empty());
+        assert!(!engine.system_prompt.contains("ipython("));
+        engine.dispose_kernel().await;
+    }
+}

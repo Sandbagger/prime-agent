@@ -153,6 +153,7 @@ pub struct Args {
     pub print: bool,
     pub export: Option<String>,
     pub no_skills: bool,
+    pub no_tools: bool,
     pub skills: Vec<String>,
     pub prompt_templates: Vec<String>,
     pub no_prompt_templates: bool,
@@ -358,6 +359,9 @@ pub fn parse_args(args: &[String]) -> Args {
                 let value = require_value!(arg);
                 result.themes.push(value);
             }
+            "--no-tools" => result.no_tools = true,
+            // Rust has no TypeScript extension loader; explicitly requesting none is safe.
+            "--no-extensions" => {}
             "--no-skills" | "-ns" => result.no_skills = true,
             "--no-prompt-templates" | "-np" => result.no_prompt_templates = true,
             "--no-themes" => result.no_themes = true,
@@ -472,6 +476,11 @@ pub fn parse_args(args: &[String]) -> Args {
         i += 1;
     }
 
+    if result.no_tools && !(result.print || matches!(result.mode, Some(Mode::Json | Mode::Rpc))) {
+        result.diagnostics.push(Diagnostic::error(
+            "--no-tools requires --print, --mode json, or --mode rpc",
+        ));
+    }
     if result.goal_token_budget.is_some() && result.goal.is_none() {
         result
             .diagnostics
@@ -521,6 +530,27 @@ mod tests {
             .find(|d| d.is_error)
             .map(|d| d.message.as_str())
             .unwrap_or_default()
+    }
+
+    #[test]
+    fn isolated_health_flags_are_accepted_without_enabling_tools() {
+        let parsed = parse(&[
+            "--print",
+            "--no-tools",
+            "--no-extensions",
+            "--no-session",
+            "--offline",
+            "--no-context-files",
+            "--no-skills",
+            "--no-prompt-templates",
+            "--no-themes",
+        ]);
+        assert!(
+            !parsed.diagnostics.iter().any(|d| d.is_error),
+            "{:?}",
+            parsed.diagnostics
+        );
+        assert!(parsed.no_tools);
     }
 
     #[test]

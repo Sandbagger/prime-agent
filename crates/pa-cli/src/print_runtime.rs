@@ -574,7 +574,7 @@ async fn build_headless_engine_with(
             spawned_by_request_id: None,
         },
     );
-    let engine = pa_core::session_engine::engine::create_session(
+    let engine = pa_core::session_engine::engine::create_session_with_tool_policy(
         pa_core::session_engine::engine::SessionEngineConfig {
             on_late_sent_agent_message: None,
             cron_store: None,
@@ -617,6 +617,7 @@ async fn build_headless_engine_with(
             queued_steering_probe: None,
             image_model_router: Some(image_model_router),
         },
+        !config.no_tools,
     )
     .await
     .map_err(|error| format!("{error:#}"))?;
@@ -1503,7 +1504,7 @@ async fn build_faux_engine_with(
     let stream_fn = switchable_stream_fn(std::sync::Arc::clone(&provider_target));
     // The faux path shares the session-manager wiring with the real provider
     // path so binary-level tests can verify persistence without the network.
-    let engine = pa_core::session_engine::engine::create_session(
+    let engine = pa_core::session_engine::engine::create_session_with_tool_policy(
         pa_core::session_engine::engine::SessionEngineConfig {
             on_late_sent_agent_message: None,
             cron_store: None,
@@ -1539,6 +1540,7 @@ async fn build_faux_engine_with(
             queued_steering_probe: None,
             image_model_router: None,
         },
+        !config.no_tools,
     )
     .await
     .map_err(|error| format!("{error:#}"))?;
