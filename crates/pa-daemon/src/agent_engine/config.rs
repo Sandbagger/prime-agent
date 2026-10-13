@@ -82,6 +82,8 @@ pub(super) struct RestoredSessionModel {
 #[derive(Clone, Debug, Default, serde::Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub(crate) struct CreateSessionResources {
+    pub(crate) no_tools: bool,
+    pub(crate) initial_goal: Option<InitialGoal>,
     pub(crate) system_prompt: Option<String>,
     pub(crate) append_system_prompt: Vec<String>,
     pub(crate) skills: Vec<String>,
@@ -90,6 +92,13 @@ pub(crate) struct CreateSessionResources {
     /// The creating client's mode (`interactive`, `acp`, ...) for the
     /// session's telemetry; absent reports `unknown` (TS parity).
     pub(crate) execution_mode: Option<String>,
+}
+
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct InitialGoal {
+    pub(crate) objective: String,
+    pub(crate) token_budget: Option<u64>,
 }
 
 /// The create command's `--models` scope inputs: the startup chain picks

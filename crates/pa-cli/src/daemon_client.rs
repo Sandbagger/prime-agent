@@ -81,6 +81,16 @@ impl DaemonClient {
         command: DaemonCommand,
         timeout_ms: u64,
     ) -> Result<DaemonResponse> {
+        self.request_with_events(command, timeout_ms, |_| Ok(()))
+    }
+
+    /// Deliver stream frames while the command remains pending.
+    pub(crate) fn request_with_events(
+        &mut self,
+        command: DaemonCommand,
+        timeout_ms: u64,
+        mut event: impl FnMut(&serde_json::Value) -> Result<()>,
+    ) -> Result<DaemonResponse> {
         let command_type = command_type_name(&command).to_string();
         let operation = Operation::Command(&command_type);
         let hello = self.wait_for_hello(HELLO_TIMEOUT_MS)?;
@@ -132,7 +142,7 @@ impl DaemonClient {
                     return serde_json::from_value(value)
                         .map_err(|error| anyhow!("invalid daemon response: {error}"));
                 }
-                _ => {}
+                _ => event(&value)?,
             }
         }
     }

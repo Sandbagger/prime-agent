@@ -243,6 +243,8 @@ impl Supervisor {
             "skills",
             "promptTemplates",
             "autonomous",
+            "initialGoal",
+            "noTools",
             "executionMode",
         ] {
             if let Some(value) = config_object.and_then(|config| config.get(key)) {

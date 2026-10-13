@@ -252,6 +252,21 @@ impl AgentSessionEngine {
         }
         let built = self.build_session(model).await?;
         self.adopt_built_session(&built).await?;
+        // Only seed after durable branch hydration; resumed goals must win.
+        let initial_goal = if self.rlm_depth.load(std::sync::atomic::Ordering::Relaxed) == 0 {
+            self.create_resources
+                .read()
+                .expect("create resources lock")
+                .initial_goal
+                .clone()
+        } else {
+            None
+        };
+        if let Some(goal) = initial_goal {
+            built
+                .seed_initial_goal(&goal.objective, goal.token_budget)
+                .await?;
+        }
         self.session.lock().await.replace(Arc::new(built));
         Ok(())
     }
@@ -932,54 +947,57 @@ impl AgentSessionEngine {
             .lock()
             .expect("late agent message sink lock")
             .clone();
-        pa_core::session_engine::engine::create_session(SessionEngineConfig {
-            on_late_sent_agent_message,
-            semantic_edges,
-            telemetry,
-            cwd,
-            // TS settings.imageModel routing: the daemon owns the routing;
-            // the headless surfaces pass `None` to keep their own.
-            image_model_router: None,
-            agent_dir: self.config.agent_dir.clone(),
-            mcp_manager: Some(std::sync::Arc::clone(&self.mcp)),
-            model: Some(agent_model),
-            thinking_level: Some(map_thinking_level(self.effective_thinking())),
-            stream_fn: Some(stream_fn),
-            // Model tools: `ipython` only; the engine adds the kernel-backed `ipython` tool itself.
-            tools: vec![],
-            custom_system_prompt: create_resources.system_prompt,
-            prompt_guidelines: create_resources.append_system_prompt,
-            generic_mcp_servers: vec![],
-            allow_recursion: None,
-            session_manager: Some(session_manager),
-            extra_host_handlers: self.extra_host_handlers(),
-            conversation_log_path: session_file,
-            additional_skill_paths: create_resources.skills,
-            additional_prompt_paths: create_resources.prompt_templates,
-            extra_builtin_skill_overrides: vec![],
-            rlm_subagent_host: self.children.clone().map(|children| {
-                children as Arc<dyn pa_core::session_engine::rlm_host::RlmSubagentHost>
-            }),
-            rlm_depth: Some(self.rlm_depth.load(std::sync::atomic::Ordering::Relaxed)),
-            model_info: Some(model.clone()),
-            // Prewarm; the depth gate keeps subagent workers lazy.
-            prewarm_ipython_kernel: Some(true),
-            on_background_work_settled,
-            // The worker-installed purge withdraws queued minted continuations.
-            queued_goal_context_purge,
-            // The steering lane owns the stop hooks (a queued steer cuts the next turn).
-            queued_steering_probe: self.config.queued_steering_probe.clone(),
-            // Seeded from settings at create; the live switch updates the slot ahead of any later
-            // build.
-            steering_mode,
-            follow_up_mode,
-            // The shared scheduled-jobs store with the identity the kernel binding needs; enriched
-            // per build.
-            cron_store: self.cron_wiring().map(|mut wiring| {
-                wiring.binding = self.kernel_cron_binding().or(wiring.binding);
-                wiring
-            }),
-        })
+        let engine = pa_core::session_engine::engine::create_session_with_tool_policy(
+            SessionEngineConfig {
+                on_late_sent_agent_message,
+                semantic_edges,
+                telemetry,
+                cwd,
+                // TS settings.imageModel routing: the daemon owns the routing;
+                // the headless surfaces pass `None` to keep their own.
+                image_model_router: None,
+                agent_dir: self.config.agent_dir.clone(),
+                mcp_manager: Some(std::sync::Arc::clone(&self.mcp)),
+                model: Some(agent_model),
+                thinking_level: Some(map_thinking_level(self.effective_thinking())),
+                stream_fn: Some(stream_fn),
+                // Model tools: `ipython` only; the engine adds the kernel-backed `ipython` tool itself.
+                tools: vec![],
+                custom_system_prompt: create_resources.system_prompt,
+                prompt_guidelines: create_resources.append_system_prompt,
+                generic_mcp_servers: vec![],
+                allow_recursion: None,
+                session_manager: Some(session_manager),
+                extra_host_handlers: self.extra_host_handlers(),
+                conversation_log_path: session_file,
+                additional_skill_paths: create_resources.skills,
+                additional_prompt_paths: create_resources.prompt_templates,
+                extra_builtin_skill_overrides: vec![],
+                rlm_subagent_host: self.children.clone().map(|children| {
+                    children as Arc<dyn pa_core::session_engine::rlm_host::RlmSubagentHost>
+                }),
+                rlm_depth: Some(self.rlm_depth.load(std::sync::atomic::Ordering::Relaxed)),
+                model_info: Some(model.clone()),
+                // Prewarm; the depth gate keeps subagent workers lazy.
+                prewarm_ipython_kernel: Some(true),
+                on_background_work_settled,
+                // The worker-installed purge withdraws queued minted continuations.
+                queued_goal_context_purge,
+                // The steering lane owns the stop hooks (a queued steer cuts the next turn).
+                queued_steering_probe: self.config.queued_steering_probe.clone(),
+                // Seeded from settings at create; the live switch updates the slot ahead of any later
+                // build.
+                steering_mode,
+                follow_up_mode,
+                // The shared scheduled-jobs store with the identity the kernel binding needs; enriched
+                // per build.
+                cron_store: self.cron_wiring().map(|mut wiring| {
+                    wiring.binding = self.kernel_cron_binding().or(wiring.binding);
+                    wiring
+                }),
+            },
+            !create_resources.no_tools,
+        )
         .await
         .inspect(|engine| {
             // A queue-mode switch that landed mid-build wrote only the live slot: re-apply the
@@ -997,6 +1015,7 @@ impl AgentSessionEngine {
             if let Some(mode) = follow_up_mode {
                 engine.session.agent().set_follow_up_mode(mode);
             }
-        })
+        })?;
+        Ok(engine)
     }
 }

@@ -118,7 +118,7 @@ async fn acp_mode_main(options: &RunOptions) -> Result<i32, String> {
 /// the startup create): the session the flags select, client-owned only
 /// for `--no-session`, plus the session's cwd. The worker opens and
 /// leases the selected file itself.
-fn daemon_acp_create(
+pub(crate) fn daemon_acp_create(
     options: &RunOptions,
 ) -> Result<(std::path::PathBuf, pa_types::daemon::DaemonCommand), String> {
     use pa_types::daemon::DaemonSessionLifecycle;
@@ -157,8 +157,13 @@ fn daemon_acp_create(
         "cwd": cwd.display().to_string(),
         "sessionDir": session_dir.display().to_string(),
         // The telemetry execution mode (TS main.ts `executionMode: appMode`).
-        "executionMode": "acp",
+        "executionMode": options.app_mode.as_str(),
+        "noTools": config.no_tools,
     });
+    if let Some(goal) = &config.initial_goal {
+        create_config["initialGoal"] =
+            serde_json::json!({"objective": goal.objective, "tokenBudget": goal.token_budget});
+    }
     if let Some(provider) = &config.provider {
         create_config["provider"] = serde_json::json!(provider);
     }
@@ -358,6 +363,9 @@ impl From<HeadlessEngine> for pa_daemon::rpc::session::RpcEngineHandle {
 }
 
 fn run_print_mode(options: &RunOptions) -> Result<i32, String> {
+    if pa_ai::native_policy::enabled() && options.daemon_socket.is_some() {
+        return crate::daemon_headless::run(options).map_err(|error| format!("{error:#}"));
+    }
     with_print_runtime(options, |options, lease| {
         Box::pin(print_mode_main(options, lease))
     })
