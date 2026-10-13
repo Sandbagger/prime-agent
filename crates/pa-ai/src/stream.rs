@@ -120,6 +120,11 @@ pub fn stream(
     let provider = resolve_provider(&model.api)?;
     let mut options = options;
     clamp_output_budget(model, context, options.as_mut());
+    if crate::native_policy::enabled() {
+        return Err(ProviderError::Message(
+            "substrate requires explicit simple reasoning options".into(),
+        ));
+    }
     Ok(provider.stream(model, context, options.as_ref()))
 }
 
@@ -156,6 +161,16 @@ pub fn stream_simple(
     // materialized default builds the same request otherwise.
     let simple = options.get_or_insert_with(SimpleStreamOptions::default);
     clamp_output_budget(model, context, Some(&mut simple.base));
+    if crate::native_policy::enabled() {
+        let model = model.clone();
+        let context = context.clone();
+        let governed_model = model.clone();
+        return Ok(crate::native_policy::govern(
+            governed_model,
+            options.unwrap_or_default(),
+            move |options| provider.stream_simple(&model, &context, Some(&options)),
+        ));
+    }
     Ok(provider.stream_simple(model, context, options.as_ref()))
 }
 

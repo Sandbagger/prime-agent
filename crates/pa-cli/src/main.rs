@@ -1,4 +1,8 @@
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("--substrate-protocol-version") {
+        println!("prime-substrate/v1");
+        return;
+    }
     // Allocator tuning before any thread spawns: the session-load and
     // attach-snapshot phases are large transient bursts, and glibc's
     // per-thread arenas otherwise keep each burst's high-water pages

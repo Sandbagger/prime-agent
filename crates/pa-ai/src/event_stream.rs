@@ -183,9 +183,22 @@ impl AssistantMessageEventWriter {
 /// final-result future.
 pub struct AssistantMessageEventStream {
     shared: Arc<Shared>,
+    cancel_on_drop: Option<tokio_util::sync::CancellationToken>,
+}
+
+impl Drop for AssistantMessageEventStream {
+    fn drop(&mut self) {
+        if let Some(token) = &self.cancel_on_drop {
+            token.cancel();
+        }
+    }
 }
 
 impl AssistantMessageEventStream {
+    pub(crate) fn cancel_on_drop(mut self, token: tokio_util::sync::CancellationToken) -> Self {
+        self.cancel_on_drop = Some(token);
+        self
+    }
     /// Create a linked writer/stream pair.
     #[must_use]
     pub fn new() -> (AssistantMessageEventWriter, Self) {
@@ -196,7 +209,10 @@ impl AssistantMessageEventStream {
             AssistantMessageEventWriter {
                 shared: shared.clone(),
             },
-            Self { shared },
+            Self {
+                shared,
+                cancel_on_drop: None,
+            },
         )
     }
 

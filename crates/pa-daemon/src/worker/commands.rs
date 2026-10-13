@@ -61,6 +61,17 @@ impl Worker {
             // top of the installed history: release its freed heap.
             pa_types::memory_release::trim_freed_heap();
         }
+        if matches!(
+            command_type,
+            "abort" | "abort_and_send_queued" | "abort_and_clear_queue"
+        ) && pa_ai::native_policy::enabled()
+            && self.core.lock().unwrap().rlm_depth == 0
+        {
+            self.engine.abort_in_flight_turn();
+            if let Err(error) = pa_ai::native_policy::cancel_operator_prompt().await {
+                eprintln!("substrate operator cancellation failed: {error}");
+            }
+        }
         match command_type {
             "create" => self.handle_create(payload).await,
             "attach" => self.handle_attach(payload),

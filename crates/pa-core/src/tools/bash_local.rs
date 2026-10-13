@@ -55,6 +55,7 @@ impl BashOperations for LocalBashOperations {
             for (key, value) in env.unwrap_or_else(get_shell_env) {
                 process.env(key, value);
             }
+            pa_ai::native_policy::scrub_tool_command(&mut process);
             // Detached process group on POSIX only, so kill_process_tree can reach descendants
             // (TS: `detached: process.platform !== "win32"`); on Windows tree kills go through
             // `taskkill /T`. Hidden window everywhere.

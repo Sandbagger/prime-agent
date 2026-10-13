@@ -938,6 +938,7 @@ pub async fn run_worker() -> Result<()> {
         return Err(anyhow!("worker mode requires {WORKER_ROLE_ENV}=1"));
     }
     let config = WorkerConfig::from_env()?;
+    pa_ai::native_policy::initialize(&config.active_session_id).map_err(anyhow::Error::msg)?;
     // Self-registration: the supervisor's roster survives its own restarts
     // because workers re-present their identity (liveness watch + backoff).
     let registration = crate::registration::start(&config);

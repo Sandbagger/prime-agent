@@ -499,6 +499,7 @@ async fn run_bash(run: RunBash<'_>) -> BashEnd {
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    pa_ai::native_policy::scrub_tool_command(command.as_std_mut());
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(error) => return spawn_failure(error.to_string()),
