@@ -32,6 +32,7 @@ pub async fn prompt(state: &Arc<RpcState>, payload: &Value) -> Result<ResponseDa
         .ok_or_else(|| "prompt requires a message".to_string())?;
     let images = protocol::command_images(payload);
     let behavior = protocol::command_streaming_behavior(payload);
+    let input_admission = state.session.input_admission.lock().await;
     let handle = state.session.handle().await;
     let engine = handle.engine.clone();
     if engine.session.classify_session_command(message).is_none() {
@@ -56,6 +57,7 @@ pub async fn prompt(state: &Arc<RpcState>, payload: &Value) -> Result<ResponseDa
         )
         .await
         .map_err(|error| format!("{error:#}"))?;
+    drop(input_admission);
     resume_pump(state);
     let PromptOutcome::SessionCommand(command) = admission else {
         // The admitted model turn parks the queued rows behind it (the
@@ -225,11 +227,27 @@ pub async fn steer_or_follow_up(
         .and_then(Value::as_str)
         .ok_or_else(|| format!("{name} requires a message"))?;
     let images = protocol::command_images(payload);
+    let _input_admission = state.session.input_admission.lock().await;
     let handle = state.session.handle().await;
     let engine = handle.engine.clone();
     let agent = engine.session.agent();
     let batch = user_prompt_message(message, &images);
-    if name == "steer" {
+    if pa_ai::native_policy::enabled() && !agent.state().await.is_streaming {
+        // An idle queue command is a new operator turn. Admit its raw user
+        // message directly, preserving literal text rather than interpreting
+        // slash commands. Wait only for registration, never for completion.
+        state
+            .session
+            .observer
+            .lock()
+            .await
+            .begin(&engine, message, images.len())
+            .await?;
+        agent
+            .prompt_until_accepted(batch)
+            .await
+            .map_err(|error| format!("{error:#}"))?;
+    } else if name == "steer" {
         agent.steer(batch);
     } else {
         agent.follow_up(batch);

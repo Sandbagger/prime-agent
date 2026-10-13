@@ -58,6 +58,8 @@ pub type RpcEngineFactory = Arc<
 
 /// The live session state one RPC connection drives.
 pub struct RpcSession {
+    /// Serialize only prompt admission; busy steering never waits for turn completion.
+    pub(crate) input_admission: tokio::sync::Mutex<()>,
     pub(crate) observer: tokio::sync::Mutex<crate::native_standalone::Observer>,
     handle: Arc<tokio::sync::RwLock<RpcEngineHandle>>,
     writer: LineWriter,
@@ -89,6 +91,7 @@ impl RpcSession {
     ) -> Self {
         let observer = crate::native_standalone::Observer::attach(&handle.engine).await;
         let session = Self {
+            input_admission: tokio::sync::Mutex::new(()),
             observer: tokio::sync::Mutex::new(observer),
             handle: Arc::new(tokio::sync::RwLock::new(handle)),
             writer,
