@@ -507,6 +507,9 @@ impl Worker {
         // The abort supervision's terminal record: the rebuilt transcript discloses
         // the abort with the same `compaction_outcome` row the auto-abort arms persist
         // (a manual run persists nothing); the dedup matches the row's fields alone.
+        if let Err(error) = pa_ai::native_policy::durable_session(store.session_id()) {
+            return response_failure(None, "create", &error, None);
+        }
         let interrupted_compaction_requested = payload.get("interruptedCompaction").is_some();
         let interrupted_compaction = crate::compaction::interrupted_compaction_disclosure(payload);
         // The disclosure row's landing state: the supervisor consumes the terminal

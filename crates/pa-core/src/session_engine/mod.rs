@@ -218,7 +218,7 @@ impl AgentSession {
         harness_digest: Option<harness_digest::HarnessDigestContext>,
     ) -> anyhow::Result<Self> {
         let persistence = session.clone();
-        pa_ai::native_policy::durable_session(session.lock().await.get_session_id())
+        pa_ai::native_policy::runtime_session(session.lock().await.get_session_id())
             .map_err(anyhow::Error::msg)?;
         agent
             .subscribe(move |event, _signal| {

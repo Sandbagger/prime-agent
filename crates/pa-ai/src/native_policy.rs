@@ -146,6 +146,21 @@ pub fn durable_session(session_id: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Standalone engines own their history; daemon engines use an ephemeral manager
+/// beneath the worker's already-bound durable history and must not replace it.
+pub fn runtime_session(session_id: &str) -> Result<(), String> {
+    if !enabled() {
+        return Ok(());
+    }
+    if SESSION.get().is_none() {
+        return durable_session(session_id);
+    }
+    if DURABLE_SESSION.get().is_none() {
+        return Err("host durable history identity is unbound".into());
+    }
+    Ok(())
+}
+
 fn validate_reply(value: Value) -> Result<Value, String> {
     if value.get("ok") == Some(&Value::Bool(true)) {
         Ok(value)
@@ -390,6 +405,8 @@ mod tests {
             runtime.block_on(async {
                 initialize("active-test").unwrap();
                 durable_session("durable-test").unwrap();
+                runtime_session("ephemeral-engine-id").unwrap();
+                assert!(durable_session("different-history").is_err());
                 let model = crate::models_generated::get_models("openai")[0];
                 let stream = govern(
                     model.clone(),
@@ -420,6 +437,9 @@ mod tests {
                 assert_eq!(request["op"], expected);
                 assert_eq!(request["session_id"], "active-test");
                 assert_eq!(request["secret"], "test-secret");
+                if expected == "root_bind" {
+                    assert_eq!(request["durable_session_id"], "durable-test");
+                }
                 let reply = if expected == "root_bind" {
                     "{\"ok\":true}\n"
                 } else {
