@@ -336,7 +336,9 @@ impl TurnRunner {
                 if let Some(store) = &core.store {
                     self.events.telemetry_begin(json!({
                         "sessionId":store.session_id(),"activeSessionId":core.active_session_id,
-                        "sessionFile":store.path,"cwd":core.cwd,"provider":provider,"model":model,
+                        "sessionFile": if store.path.as_os_str().is_empty() { Value::Null } else { json!(store.path) },
+                        "ephemeral": store.path.as_os_str().is_empty(),
+                        "cwd":core.cwd,"provider":provider,"model":model,
                         "thinkingLevel":thinking
                     }), &first.message, first.images.len());
                 }
