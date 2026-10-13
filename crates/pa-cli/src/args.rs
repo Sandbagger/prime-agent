@@ -476,7 +476,12 @@ pub fn parse_args(args: &[String]) -> Args {
         i += 1;
     }
 
-    if result.no_tools && !(result.print || matches!(result.mode, Some(Mode::Json | Mode::Rpc))) {
+    let local_tool_policy_supported = match result.mode {
+        Some(Mode::Acp | Mode::Daemon) => false,
+        Some(Mode::Json | Mode::Rpc) => true,
+        Some(Mode::Text) | None => result.print,
+    };
+    if result.no_tools && !local_tool_policy_supported {
         result.diagnostics.push(Diagnostic::error(
             "--no-tools requires --print, --mode json, or --mode rpc",
         ));
@@ -551,6 +556,14 @@ mod tests {
             parsed.diagnostics
         );
         assert!(parsed.no_tools);
+    }
+
+    #[test]
+    fn no_tools_checks_effective_mode_even_when_print_is_also_set() {
+        for mode in ["acp", "daemon"] {
+            let parsed = parse(&["--print", "--mode", mode, "--no-tools"]);
+            assert!(parsed.diagnostics.iter().any(|d| d.is_error));
+        }
     }
 
     #[test]
