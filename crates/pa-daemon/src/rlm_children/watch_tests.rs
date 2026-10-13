@@ -1109,6 +1109,10 @@ fn an_already_settled_child_never_re_scores_as_an_unreachable_error() {
     // A settled child keeps its positive verdict.
     let mut settled = base();
     settled.settled_status = Some("done");
+    // A terminal verdict is not a completed settlement acknowledgment.
+    assert!(!SupervisorChildSessions::collect_result(&settled).settled);
+    settled.settled = true;
+    assert!(SupervisorChildSessions::collect_result(&settled).settled);
     assert!(
         !super::lifecycle::should_mark_unreachable_error(&settled),
         "an idle-passivated (or post-settle crashed) child keeps its settled verdict"

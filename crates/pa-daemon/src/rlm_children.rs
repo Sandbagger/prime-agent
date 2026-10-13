@@ -597,11 +597,18 @@ impl SupervisorChildSessions {
 
     /// Re-arm usage observation for a child after an agent message was
     /// delivered to it; no-op for non-children or already-observed targets.
-    pub async fn observe_child_usage(&self, target: &str) {
+    pub async fn observe_child_usage(&self, target: &str) -> Result<()> {
         let Some(record) = self.inner.find_record(target).await else {
-            return;
+            return Ok(());
         };
+        if pa_ai::native_policy::enabled() {
+            let child = record.lock().await;
+            if child.settled_status.is_some() || child.settled || child.closed_by_parent {
+                bail!("Cannot message a terminal child under substrate policy; spawn a new child with a fresh route grant");
+            }
+        }
         SupervisorChildSessionsInner::arm_usage_watch(&self.inner, &record).await;
+        Ok(())
     }
 
     /// Record that this child replied since its task was admitted; the
@@ -742,7 +749,7 @@ impl SupervisorChildSessions {
             session_name: Some(record.session_name.clone()),
             session_dir: Some(record.session_dir.clone()),
             status: record.status(),
-            settled: record.settled_status.is_some(),
+            settled: record.settled,
             answer_preview: record.answer_preview.clone(),
             error: record.error.clone(),
             duration_ms: Some(now_ms().saturating_sub(record.started_at_ms)),
@@ -781,6 +788,11 @@ impl SupervisorChildSessionsInner {
             || matches!(self.child_busy(&active_session_id).await, Ok(false));
         if let Err(error) = pa_ai::native_policy::settle_child(&child_id, quiescence_proven).await {
             eprintln!("substrate child settlement failed: {error}");
+            record.lock().await.error =
+                Some(format!("Substrate child settlement unresolved: {error}"));
+            // Do not release the collect barrier or report a completed funnel
+            // when policy still owns the child's scope and capacity.
+            return;
         }
         record.lock().await.settled = true;
         self.refresh_running().await;

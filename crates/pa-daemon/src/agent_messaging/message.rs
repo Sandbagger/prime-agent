@@ -211,7 +211,7 @@ impl AgentMessageController for LinkAgentMessageController {
         // re-arm that child's usage observation BEFORE the delivery (a fast child can
         // settle before the await returns; a late-armed observation never bills).
         if let Some(children) = &self.children {
-            children.observe_child_usage(&input.target).await;
+            children.observe_child_usage(&input.target).await?;
         }
         let receipt = match self.deliver_direct(&input).await {
             DirectDelivery::Delivered(receipt) => receipt,

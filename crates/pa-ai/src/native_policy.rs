@@ -32,13 +32,22 @@ pub async fn settle_child(child: &str, quiescence_proven: bool) -> Result<(), St
         .get_or_init(Default::default)
         .lock()
         .map_err(|_| "child grants poisoned")?
-        .remove(child);
+        .get(child)
+        .cloned();
     if let Some(grant) = grant {
         request(
             "child_settle",
             json!({"grant_id":grant,"quiescence_proven":quiescence_proven}),
         )
         .await?;
+        // Keep authority tracked until the service acknowledges release. A
+        // semantic rejection may be retried once quiescence is established.
+        CHILDREN
+            .get()
+            .expect("child grants")
+            .lock()
+            .map_err(|_| "child grants poisoned")?
+            .remove(child);
     }
     Ok(())
 }
@@ -396,6 +405,64 @@ mod tests {
             validate_reply(serde_json::json!({"ok": true})).unwrap(),
             serde_json::json!({"ok": true})
         );
+    }
+
+    #[test]
+    fn rejected_child_settlement_preserves_grant_for_acknowledged_retry() {
+        if std::env::var("PA_NATIVE_CHILD_SETTLEMENT_TEST").is_ok() {
+            tokio::runtime::Runtime::new().unwrap().block_on(async {
+                initialize("settlement-parent").unwrap();
+                remember_child("child-a", "grant-a");
+                assert!(settle_child("child-a", true).await.is_err());
+                assert_eq!(
+                    CHILDREN
+                        .get()
+                        .unwrap()
+                        .lock()
+                        .unwrap()
+                        .get("child-a")
+                        .cloned(),
+                    Some("grant-a".into())
+                );
+                settle_child("child-a", true).await.unwrap();
+                assert!(!CHILDREN
+                    .get()
+                    .unwrap()
+                    .lock()
+                    .unwrap()
+                    .contains_key("child-a"));
+            });
+            return;
+        }
+        use std::io::{BufRead, Write};
+        let socket =
+            std::env::temp_dir().join(format!("pa-child-settle-{}.sock", std::process::id()));
+        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        let server = std::thread::spawn(move || {
+            for reply in [
+                "{\"ok\":false,\"code\":\"child_calls_active\"}\n",
+                "{\"ok\":true}\n",
+            ] {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut line = String::new();
+                std::io::BufReader::new(stream.try_clone().unwrap())
+                    .read_line(&mut line)
+                    .unwrap();
+                let request: Value = serde_json::from_str(&line).unwrap();
+                assert_eq!(request["op"], "child_settle");
+                assert_eq!(request["grant_id"], "grant-a");
+                stream.write_all(reply.as_bytes()).unwrap();
+            }
+        });
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "native_policy::tests::rejected_child_settlement_preserves_grant_for_acknowledged_retry", "--nocapture"])
+            .env("PA_NATIVE_CHILD_SETTLEMENT_TEST", "1")
+            .env("DOTFILES_PRIME_NATIVE_SOCKET", &socket)
+            .env("DOTFILES_PRIME_POLICY_SECRET", "test-secret")
+            .status().unwrap();
+        assert!(status.success());
+        server.join().unwrap();
+        std::fs::remove_file(socket).unwrap();
     }
 
     #[test]
