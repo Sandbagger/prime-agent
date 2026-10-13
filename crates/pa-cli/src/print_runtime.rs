@@ -164,6 +164,9 @@ pub(crate) fn daemon_acp_create(
         create_config["initialGoal"] =
             serde_json::json!({"objective": goal.objective, "tokenBudget": goal.token_budget});
     }
+    if let Some(models) = &config.models {
+        create_config["models"] = serde_json::json!(models);
+    }
     if let Some(provider) = &config.provider {
         create_config["provider"] = serde_json::json!(provider);
     }

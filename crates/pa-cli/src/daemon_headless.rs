@@ -22,6 +22,9 @@ fn accepted(response: pa_types::daemon::DaemonResponse) -> Result<Value> {
 }
 
 pub(crate) fn run(options: &RunOptions) -> Result<i32> {
+    if options.config.api_key.is_some() {
+        anyhow::bail!("--api-key is unsupported for an owned daemon headless session; configure provider authentication outside the persisted create config");
+    }
     let socket = crate::config::resolve_daemon_socket_path(options.daemon_socket.as_deref());
     // Never spawn or fall back here: this socket is the wrapper's owned runtime.
     let mut client = DaemonClient::connect(&socket)?;
