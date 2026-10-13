@@ -182,9 +182,10 @@ pub fn agent_event_json(event: &AgentEvent) -> Option<serde_json::Value> {
             tool_call_id,
             tool_name,
             result,
-            ..
+            is_error,
         } => serde_json::json!({
             "type": "tool_execution_end",
+            "isError": is_error,
             "toolCallId": tool_call_id,
             "toolName": tool_name,
             "result": json_round_trip(result).unwrap_or(serde_json::Value::Null),
@@ -200,6 +201,21 @@ mod tests {
     use pa_agent::types::{
         AgentEvent, AgentMessage, AssistantContent, AssistantMessage, TextContent, ToolCall, Usage,
     };
+
+    #[test]
+    fn tool_execution_error_survives_public_event_serialization() {
+        for is_error in [false, true] {
+            let event = AgentEvent::ToolExecutionEnd {
+                tool_call_id: "tool".into(),
+                tool_name: "ipython".into(),
+                result: pa_agent::types::AgentToolResult::text("tool result"),
+                is_error,
+            };
+            let frame = agent_event_json(&event).unwrap();
+            assert_eq!(frame["isError"], serde_json::json!(is_error));
+            assert_eq!(frame["toolCallId"], "tool");
+        }
+    }
 
     /// A minimal partial assistant message (the faux wire fields).
     fn partial(content: Vec<AssistantContent>) -> AssistantMessage {
