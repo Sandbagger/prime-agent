@@ -173,6 +173,7 @@ async def spawn(
     name: str,
     model: str | None = None,
     thinking: str | None = None,
+    route: dict[str, Any] | None = None,
 ) -> RLMSpawnHandle:
     """Spawn a recursive Prime Agent child and return once its task is admitted.
 
@@ -184,6 +185,8 @@ async def spawn(
     if not isinstance(prompt, str):
         raise TypeError(f"prompt must be str, got {type(prompt).__name__}")
     kwargs: dict[str, Any] = {"name": name}
+    if route is not None:
+        kwargs["route"] = route
     if model is not None:
         kwargs["model"] = model
     if thinking is not None:
@@ -629,8 +632,9 @@ class _RLMNamespace:
         name: str,
         model: str | None = None,
         thinking: str | None = None,
+        route: dict[str, Any] | None = None,
     ) -> RLMSpawnHandle:
-        return await spawn(prompt, name=name, model=model, thinking=thinking)
+        return await spawn(prompt, name=name, model=model, thinking=thinking, route=route)
 
     async def create_session(
         self,

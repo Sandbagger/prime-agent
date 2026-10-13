@@ -226,6 +226,7 @@ impl Supervisor {
         // RLM recursion identity, the session flags, and the create-time scope (`models`)
         // ride the durable create command so a respawned worker replays the same session.
         for key in [
+            "substrateGrant",
             "rlmDepth",
             "rlmMaxDepth",
             "parentSessionPath",

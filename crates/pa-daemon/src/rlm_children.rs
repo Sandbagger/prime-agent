@@ -772,6 +772,13 @@ impl SupervisorChildSessionsInner {
     /// the record settled and wakes the barrier only after the terminal
     /// notice is delivered.
     pub(crate) async fn fire_settle_hook(&self, record: &Arc<Mutex<ChildRecord>>) {
+        let child_id = record.lock().await.rlm_child_id.clone();
+        let active_session_id = record.lock().await.active_session_id.clone();
+        let quiescence_proven = !pa_ai::native_policy::enabled()
+            || matches!(self.child_busy(&active_session_id).await, Ok(false));
+        if let Err(error) = pa_ai::native_policy::settle_child(&child_id, quiescence_proven).await {
+            eprintln!("substrate child settlement failed: {error}");
+        }
         record.lock().await.settled = true;
         self.refresh_running().await;
         self.settle_notify.notify_waiters();

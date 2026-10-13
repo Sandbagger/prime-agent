@@ -52,7 +52,7 @@ async fn resolve_child_model_allowlisted(
 }
 
 impl RlmSubagentHost for SupervisorChildSessions {
-    fn spawn(&self, request: RlmSpawnRequest) -> RlmHostFuture<RlmSpawnHandle> {
+    fn spawn(&self, mut request: RlmSpawnRequest) -> RlmHostFuture<RlmSpawnHandle> {
         let this = Arc::clone(&self.inner);
         Box::pin(async move {
             let identity = this.identity.lock().expect("identity lock").clone();
@@ -83,6 +83,29 @@ impl RlmSubagentHost for SupervisorChildSessions {
                     })
                 })
                 .transpose()?;
+            let grant = if pa_ai::native_policy::enabled() {
+                let grant = pa_ai::native_policy::request("child_admit", json!({"child_id":child_id,"route":request.route,"selector":request.model,"effort":request.thinking})).await.map_err(anyhow::Error::msg)?;
+                request.model = Some(
+                    grant["selector"]
+                        .as_str()
+                        .ok_or_else(|| anyhow::anyhow!("missing admitted selector"))?
+                        .to_owned(),
+                );
+                request.thinking = Some(
+                    grant["effort"]
+                        .as_str()
+                        .ok_or_else(|| anyhow::anyhow!("missing admitted effort"))?
+                        .to_owned(),
+                );
+                Some(
+                    grant["grant_id"]
+                        .as_str()
+                        .ok_or_else(|| anyhow::anyhow!("missing child grant"))?
+                        .to_owned(),
+                )
+            } else {
+                None
+            };
             let admission = async {
                 this.assert_name_available(&name, identity.rlm_depth + 1)
                     .await?;
@@ -98,6 +121,7 @@ impl RlmSubagentHost for SupervisorChildSessions {
                 let child_dir = this.child_session_dir(&child_id, &identity)?;
                 let cwd = identity.cwd.clone().unwrap_or_else(|| "/".to_string());
                 let runtime_metadata = json!({
+                    "substrateGrant": grant,
                     "kind": "subagent",
                     "rlmChildId": child_id,
                     "parentActiveSessionId": this.parent_active_session_id,
@@ -152,7 +176,20 @@ impl RlmSubagentHost for SupervisorChildSessions {
                 anyhow::Ok((record, created, model))
             }
             .await;
-            let (record, created, model) = admission?;
+            let (record, created, model) = match admission {
+                Ok(value) => value,
+                Err(error) => {
+                    if let Some(grant) = &grant {
+                        pa_ai::native_policy::request("child_rollback", json!({"grant_id":grant}))
+                            .await
+                            .map_err(anyhow::Error::msg)?;
+                    }
+                    return Err(error);
+                }
+            };
+            if let Some(grant) = grant {
+                pa_ai::native_policy::remember_child(&child_id, &grant);
+            }
             // The task prompt runs detached from the spawn admission: the
             // handle returns at registration and the child's first turn
             // starts after the parent's continuation request is in flight.
@@ -271,6 +308,9 @@ impl RlmSubagentHost for SupervisorChildSessions {
     ) -> RlmHostFuture<RlmCreateSessionHandle> {
         let this = Arc::clone(&self.inner);
         Box::pin(async move {
+            if pa_ai::native_policy::enabled() {
+                bail!("substrate resident-session creation denied: use routed child admission");
+            }
             let identity = this.identity.lock().expect("identity lock").clone();
             if identity.rlm_depth != 0 {
                 bail!("rlm.create_session is available only from a depth-0 session");

@@ -129,6 +129,7 @@ pub struct RlmChildResult {
 /// Validated `rlm.spawn` request handed to the child-session host.
 #[derive(Debug, Clone)]
 pub struct RlmSpawnRequest {
+    pub route: Option<Value>,
     pub prompt: String,
     /// Explicit session name; the host derives a default when absent.
     pub name: Option<String>,
@@ -489,7 +490,12 @@ fn register_run(handlers: &mut HostRequestHandlers, bridge: &Arc<RlmHostBridge>)
 fn spawn_request_from_payload(prompt: &str, data: &Value) -> anyhow::Result<RlmSpawnRequest> {
     const OPERATION: &str = "rlm.spawn";
     let kwargs = kwargs_from_payload(data);
-    reject_unsupported_kwargs(&kwargs, OPERATION, &["name", "model", "thinking"])?;
+    let allowed = if pa_ai::native_policy::enabled() {
+        vec!["name", "model", "thinking", "route"]
+    } else {
+        vec!["name", "model", "thinking"]
+    };
+    reject_unsupported_kwargs(&kwargs, OPERATION, &allowed)?;
     let name = optional_string_kwarg(&kwargs, "name", OPERATION)?;
     let name = normalize_requested_rlm_subagent_session_name(name, OPERATION)?;
     if let Some(name) = &name {
@@ -501,6 +507,7 @@ fn spawn_request_from_payload(prompt: &str, data: &Value) -> anyhow::Result<RlmS
     let thinking =
         normalize_requested_rlm_subagent_thinking_level(thinking, OPERATION)?.map(String::from);
     Ok(RlmSpawnRequest {
+        route: kwargs.get("route").cloned(),
         prompt: prompt.to_string(),
         name,
         model,

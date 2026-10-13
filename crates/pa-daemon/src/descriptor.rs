@@ -100,6 +100,24 @@ pub fn worker_launch_env(
     if let Some(script) = script {
         env.insert(crate::worker::WORKER_SCRIPT_ENV.to_string(), script);
     }
+    if let Some(grant) = descriptor
+        .create_command
+        .rest
+        .get("substrateGrant")
+        .and_then(Value::as_str)
+    {
+        env.insert("DOTFILES_PRIME_NATIVE_GRANT".into(), grant.into());
+    }
+    env.insert(
+        "DOTFILES_PRIME_NATIVE_DEPTH".into(),
+        descriptor
+            .create_command
+            .rest
+            .get("rlmDepth")
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+            .to_string(),
+    );
     if let Some(dir) = &descriptor.session_dir {
         env.insert(crate::paths::SESSION_DIR_ENV.to_string(), dir.clone());
     }

@@ -80,6 +80,13 @@ impl SupervisorChildSessionsInner {
             "rlmDepth": depth,
             "rlmMaxDepth": identity.rlm_max_depth,
         });
+        if let Some(grant) = runtime_metadata
+            .as_ref()
+            .and_then(|v| v.get("substrateGrant"))
+            .and_then(Value::as_str)
+        {
+            config["substrateGrant"] = json!(grant);
+        }
         if let Some((provider, id)) = model.split_once('/') {
             config["provider"] = json!(provider);
             config["model"] = json!(id);
