@@ -77,6 +77,9 @@ impl MockSupervisor {
                 Err(_) => return,
             }
         };
+        // Darwin inherits O_NONBLOCK from the polling listener.
+        // This mock serves each accepted connection with blocking reads.
+        stream.set_nonblocking(false).expect("blocking mock stream");
         let mut writer = stream.try_clone().expect("clone mock socket");
         let mut reader = BufReader::new(stream);
 
