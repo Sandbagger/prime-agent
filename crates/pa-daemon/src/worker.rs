@@ -811,6 +811,18 @@ impl Worker {
         // `closeKeepsResumeEntry("shutdown")`).
         let _ = self.record_recovery(false, "shutdown");
         self.close_listener_then_cleanup_socket().await;
+        // The supervisor's shutdown response gates only its own connection.
+        // Direct clients still need the queued turn-end/session-closed frames
+        // before process::exit drops their independent fan-out tasks.
+        if !self
+            .events
+            .drain_terminal_events(Duration::from_secs(1))
+            .await
+        {
+            eprintln!(
+                "pa-daemon worker: terminal event drain timed out; exiting with an unflushed peer"
+            );
+        }
         std::process::exit(0)
     }
 
