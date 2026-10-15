@@ -187,8 +187,12 @@ mod tests {
 
     #[test]
     fn lsof_counts_numeric_descriptors_and_preserves_classes() {
-        assert_eq!(parse_lsof("p42\nfcwd\ntDIR\nn/tmp\nftxt\ntREG\nn/bin/tool\nf0\ntCHR\nn/dev/null\nf3\ntunix\nnendpoint\nf4\ntPIPE\n"),
-            vec!["/dev/null", "socket:endpoint", "pipe:"]);
+        assert_eq!(
+            parse_lsof(
+                "p42\nfcwd\ntDIR\nn/tmp\nftxt\ntREG\nn/bin/tool\nf0\ntCHR\nn/dev/null\nf3\ntunix\nnendpoint\nf4\ntPIPE\n"
+            ),
+            vec!["/dev/null", "socket:endpoint", "pipe:"]
+        );
     }
 
     #[test]

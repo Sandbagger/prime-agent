@@ -350,8 +350,8 @@ fn create_parent(
     created["data"].clone()
 }
 
-/// The parent worker's process id, read from its durable descriptor; the environ check
-/// guards the kill against a stale pid.
+/// The parent's durable session binding and process start identity guard the kill
+/// against a stale descriptor or recycled pid on every supported Unix platform.
 fn parent_worker_pid(agent_dir: &Path, socket: &Path, parent_id: &str) -> u32 {
     let descriptor_path =
         pa_daemon::descriptor::descriptor_dir(agent_dir, socket).join(format!("{parent_id}.json"));
@@ -360,13 +360,17 @@ fn parent_worker_pid(agent_dir: &Path, socket: &Path, parent_id: &str) -> u32 {
             .unwrap_or_else(|_| panic!("read parent descriptor {}", descriptor_path.display())),
     )
     .expect("parent descriptor json");
-    let pid = descriptor["pid"].as_u64().expect("descriptor pid") as u32;
-    let environ = std::fs::read_to_string(format!("/proc/{pid}/environ"))
-        .unwrap_or_else(|_| panic!("read /proc/{pid}/environ"));
-    assert!(
-        environ.contains(&format!("={parent_id}\0"))
-            && environ.contains(pa_daemon::worker::WORKER_ACTIVE_SESSION_ID_ENV),
-        "pid {pid} is not the worker for session {parent_id}"
+    assert_eq!(descriptor["rootActiveSessionId"], parent_id);
+    let pid = u32::try_from(descriptor["pid"].as_u64().expect("descriptor pid"))
+        .expect("worker pid fits u32");
+    let recorded_start = descriptor["processStartId"]
+        .as_str()
+        .filter(|value| !value.is_empty())
+        .expect("the live worker descriptor records its process start identity");
+    assert_eq!(
+        pa_types::platform::process_start_id(pid).as_deref(),
+        Some(recorded_start),
+        "pid {pid} no longer names the recorded worker for session {parent_id}"
     );
     pid
 }
