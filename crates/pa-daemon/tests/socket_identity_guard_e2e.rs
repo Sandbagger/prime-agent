@@ -21,8 +21,8 @@
 //!   the path, and the original's graceful exit must not unlink the
 //!   successor's live socket.
 //!
-//! The still-ours direction (the unlink DOES run on the same exit paths
-//! when the file is the binder's own) is pinned by the in-tree controls
+//! The still-ours direction (immediate unlink on Linux, safe reclamation
+//! on the next bind elsewhere) is pinned by the in-tree controls
 //! `worker_orphan_exit_e2e::orphaned_worker_exits_when_the_supervisor_socket_never_answers`
 //! and
 //! `supervisor_e2e::shutdown::a_sigterm_exits_the_supervisor_through_the_graceful_drain`,
@@ -318,24 +318,46 @@ fn orphan_exit_never_unlinks_a_replacement_bound_on_the_worker_path() {
 }
 
 /// The routed `shutdown` control (the still-ours direction of
-/// `exit_after_close`): a worker's graceful exit owns its socket file - it
-/// must remove it so a respawn does not wait out the stale-socket path.
+/// `exit_after_close`): Linux removes the worker's own socket immediately.
+/// Off Linux the refusal probe cannot distinguish a dead file from a full
+/// successor backlog, so cleanup preserves it for the next bind to reclaim.
 /// The still-ours directions of the other two call sites are pinned by the
 /// in-tree controls named in the module doc.
 #[test]
-fn routed_shutdown_removes_the_workers_own_socket_file() {
+fn routed_shutdown_leaves_the_workers_socket_path_reclaimable() {
     let dir = tempfile::TempDir::new().expect("temp dir");
     let socket = dir.path().join("worker.sock");
     let mut worker = spawn_worker(dir.path(), &socket, "shutdown-guard-token", Some("15000"));
     wait_worker_socket(&socket);
     let mut client = WorkerClient::connect(&socket, "shutdown-guard-token");
+    #[cfg(not(target_os = "linux"))]
+    let original = socket_identity(&socket);
     let shutdown = client.request("shutdown", &json!({}));
     assert_eq!(shutdown["success"], true, "shutdown failed: {shutdown}");
     wait_clean_exit(&mut worker.child, Duration::from_secs(10));
+    #[cfg(target_os = "linux")]
     assert!(
         !socket.exists(),
         "the graceful exit removed the worker's own socket file"
     );
+    #[cfg(not(target_os = "linux"))]
+    {
+        assert_eq!(
+            socket_identity(&socket),
+            original,
+            "ambiguous refusal preserves the original socket until the next bind"
+        );
+        let mut replacement = spawn_worker(dir.path(), &socket, "reclaim-token", Some("15000"));
+        // The stale pathname already exists; readiness must be a live listener.
+        wait_socket_ready(&socket);
+        let mut client = WorkerClient::connect(&socket, "reclaim-token");
+        let shutdown = client.request("shutdown", &json!({}));
+        assert_eq!(
+            shutdown["success"], true,
+            "replacement shutdown failed: {shutdown}"
+        );
+        wait_clean_exit(&mut replacement.child, Duration::from_secs(10));
+    }
 }
 
 /// The replaced-socket scenario on the routed `shutdown` arm

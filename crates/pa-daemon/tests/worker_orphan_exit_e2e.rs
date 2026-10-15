@@ -99,16 +99,51 @@ fn orphaned_worker_exits_when_the_supervisor_socket_never_answers() {
     let supervisor_socket = dir.path().join("never-bound-supervisor.sock");
     let mut worker = spawn_worker(dir.path(), &supervisor_socket);
     wait_worker_socket(&dir.path().join("worker.sock"));
+    #[cfg(not(target_os = "linux"))]
+    let original = std::fs::symlink_metadata(dir.path().join("worker.sock")).unwrap();
     assert!(
         wait_exit(&mut worker.child, Duration::from_secs(15)),
         "the orphaned worker exited on the supervisor-lost window"
     );
-    // The TS graceful exit owns its socket file: the orphan exit removes
-    // it, so a respawn does not wait out the stale-socket path.
+    // Linux can distinguish refusal from a saturated successor backlog.
+    #[cfg(target_os = "linux")]
     assert!(
         !dir.path().join("worker.sock").exists(),
         "the exited worker removed its socket file"
     );
+    #[cfg(not(target_os = "linux"))]
+    {
+        use std::os::unix::fs::MetadataExt;
+        use std::os::unix::net::UnixStream;
+
+        let socket = dir.path().join("worker.sock");
+        let retained = std::fs::symlink_metadata(&socket).unwrap();
+        assert_eq!(
+            (retained.dev(), retained.ino()),
+            (original.dev(), original.ino()),
+            "ambiguous refusal preserves the original socket until the next bind"
+        );
+        let mut replacement = spawn_worker(dir.path(), &supervisor_socket);
+        let deadline = Instant::now() + Duration::from_secs(15);
+        loop {
+            if UnixStream::connect(&socket).is_ok() {
+                break;
+            }
+            assert!(
+                replacement.child.try_wait().unwrap().is_none(),
+                "replacement exited before serving"
+            );
+            assert!(
+                Instant::now() < deadline,
+                "replacement never reclaimed the stale socket"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            wait_exit(&mut replacement.child, Duration::from_secs(15)),
+            "the replacement also exits cleanly on supervisor loss"
+        );
+    }
 }
 
 #[test]
