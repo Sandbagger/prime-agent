@@ -554,55 +554,70 @@ fn assembled_archives_carry_the_platform_alias_the_reader_demands() {
     std::fs::create_dir_all(repo.join("skills")).expect("skills dir");
     std::fs::write(repo.join("LICENSE"), "fixture license\n").expect("LICENSE");
     std::fs::write(repo.join("README.md"), "fixture readme\n").expect("README.md");
-    // The fail-closed Linux assembler accepts only a paired shipped ELF +
-    // decoder from split_debug.py, so the fixture compiles a tiny real ELF
-    // and splits it — the artifact shape the channel actually ships.
+    // Exercise the host's real release format: Linux requires a paired
+    // shipped ELF and decoder; Darwin publishes its Mach-O without a decoder.
+    let (target, platform) = match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("linux", "x86_64") => ("x86_64-unknown-linux-gnu", "linux-x64"),
+        ("linux", "aarch64") => ("aarch64-unknown-linux-gnu", "linux-arm64"),
+        ("macos", "x86_64") => ("x86_64-apple-darwin", "darwin-x64"),
+        ("macos", "aarch64") => ("aarch64-apple-darwin", "darwin-arm64"),
+        host => panic!("unsupported release fixture host: {host:?}"),
+    };
+    let is_linux = std::env::consts::OS == "linux";
     let split = tempfile::tempdir().expect("split fixture dir");
     let source = split.path().join("prime-agent.c");
     std::fs::write(&source, "int main(void) { return 0; }\n").expect("fixture source");
     let raw = split.path().join("cargo-prime-agent");
-    let compiled = Command::new("gcc")
-        .arg("-g")
-        .arg("-Wl,--build-id")
+    let mut compiler = Command::new("gcc");
+    compiler.arg("-g");
+    if is_linux {
+        compiler.arg("-Wl,--build-id");
+    }
+    let build_output = compiler
         .arg("-o")
         .arg(&raw)
         .arg(&source)
         .output()
         .expect("compile the fixture");
     assert_eq!(
-        compiled.status.code(),
+        build_output.status.code(),
         Some(0),
         "fixture gcc failed: {}",
-        String::from_utf8_lossy(&compiled.stderr)
+        String::from_utf8_lossy(&build_output.stderr)
     );
     let binary = split.path().join("prime-agent");
-    let split_run = python(
-        &workspace_root()
-            .join("scripts")
-            .join("release")
-            .join("split_debug.py"),
-        &[
-            "--binary".as_ref(),
-            raw.as_os_str(),
-            "--shipped".as_ref(),
-            binary.as_os_str(),
-            "--out".as_ref(),
-            split.path().as_os_str(),
-            "--version".as_ref(),
-            "1.2.3".as_ref(),
-            "--target".as_ref(),
-            "x86_64-unknown-linux-gnu".as_ref(),
-        ],
-    );
-    assert_eq!(
-        split_run.status.code(),
-        Some(0),
-        "fixture split failed: {}",
-        String::from_utf8_lossy(&split_run.stderr)
-    );
-    let decoder = split.path().join("prime-agent-1.2.3-linux-x64.debug.gz");
+    let decoder = if is_linux {
+        let split_run = python(
+            &workspace_root().join("scripts/release/split_debug.py"),
+            &[
+                "--binary".as_ref(),
+                raw.as_os_str(),
+                "--shipped".as_ref(),
+                binary.as_os_str(),
+                "--out".as_ref(),
+                split.path().as_os_str(),
+                "--version".as_ref(),
+                "1.2.3".as_ref(),
+                "--target".as_ref(),
+                target.as_ref(),
+            ],
+        );
+        assert_eq!(
+            split_run.status.code(),
+            Some(0),
+            "fixture split failed: {}",
+            String::from_utf8_lossy(&split_run.stderr)
+        );
+        let decoder = split
+            .path()
+            .join(format!("prime-agent-1.2.3-{platform}.debug.gz"));
+        assert!(decoder.is_file(), "decoder fixture missing");
+        Some(decoder)
+    } else {
+        std::fs::copy(&raw, &binary).expect("stage the host executable");
+        None
+    };
     assert!(binary.is_file(), "shipped fixture missing");
-    assert!(decoder.is_file(), "decoder fixture missing");
 
     let scripts = workspace_root().join("scripts/release");
     let catalog = fixture.path().join("catalog-assets");
@@ -622,25 +637,24 @@ fn assembled_archives_carry_the_platform_alias_the_reader_demands() {
     );
 
     let dist = fixture.path().join("dist");
-    let assembled = python(
-        &scripts.join("assemble_artifacts.py"),
-        &[
-            "--repo-root".as_ref(),
-            repo.as_os_str(),
-            "--version".as_ref(),
-            "1.2.3".as_ref(),
-            "--target".as_ref(),
-            "x86_64-unknown-linux-gnu".as_ref(),
-            "--binary".as_ref(),
-            binary.as_os_str(),
-            "--decoder".as_ref(),
-            decoder.as_os_str(),
-            "--catalog-assets".as_ref(),
-            catalog.as_os_str(),
-            "--out-dir".as_ref(),
-            dist.as_os_str(),
-        ],
-    );
+    let mut assemble_args = vec![
+        "--repo-root".as_ref(),
+        repo.as_os_str(),
+        "--version".as_ref(),
+        "1.2.3".as_ref(),
+        "--target".as_ref(),
+        target.as_ref(),
+        "--binary".as_ref(),
+        binary.as_os_str(),
+        "--catalog-assets".as_ref(),
+        catalog.as_os_str(),
+        "--out-dir".as_ref(),
+        dist.as_os_str(),
+    ];
+    if let Some(decoder) = &decoder {
+        assemble_args.extend(["--decoder".as_ref(), decoder.as_os_str()]);
+    }
+    let assembled = python(&scripts.join("assemble_artifacts.py"), &assemble_args);
     assert!(
         assembled.status.success(),
         "assemble_artifacts.py failed: {}",
@@ -649,11 +663,12 @@ fn assembled_archives_carry_the_platform_alias_the_reader_demands() {
 
     // The archive name is the platform alias the channel contract demands;
     // the target triple would be unreadable to the update flow.
-    let archive = dist.join("prime-agent-1.2.3-linux-x64.tar.gz");
+    let archive_name = format!("prime-agent-1.2.3-{platform}.tar.gz");
+    let archive = dist.join(&archive_name);
     assert!(archive.is_file(), "the alias-named archive exists");
     assert!(
         !dist
-            .join("prime-agent-1.2.3-x86_64-unknown-linux-gnu.tar.gz")
+            .join(format!("prime-agent-1.2.3-{target}.tar.gz"))
             .exists(),
         "the triple-named archive must not be published"
     );
@@ -662,9 +677,9 @@ fn assembled_archives_carry_the_platform_alias_the_reader_demands() {
     )
     .expect("manifest.json is JSON");
     let row = &manifest["binaries"][0];
-    assert_eq!(row["platform"], "linux-x64");
-    assert_eq!(row["target"], "x86_64-unknown-linux-gnu");
-    assert_eq!(row["file"], "prime-agent-1.2.3-linux-x64.tar.gz");
+    assert_eq!(row["platform"], platform);
+    assert_eq!(row["target"], target);
+    assert_eq!(row["file"], archive_name);
     let archive_bytes = std::fs::read(&archive).expect("read the archive");
     assert_eq!(row["sha256"], sha256_hex(&archive_bytes));
 
@@ -673,7 +688,7 @@ fn assembled_archives_carry_the_platform_alias_the_reader_demands() {
     // gate refuses a manifest missing a known platform's row), then the
     // reader over the emitted manifest.
     let out = stage_merged_manifest(fixture.path(), "1.2.3", false);
-    std::fs::copy(&archive, out.join("prime-agent-1.2.3-linux-x64.tar.gz"))
+    std::fs::copy(&archive, out.join(&archive_name))
         .expect("stage the real archive over its fixture");
     let merged_path = out.join("manifest.json");
     let mut merged: serde_json::Value = serde_json::from_str(
@@ -683,7 +698,7 @@ fn assembled_archives_carry_the_platform_alias_the_reader_demands() {
     merged["binaries"]
         .as_array_mut()
         .expect("the staged manifest's binaries")
-        .retain(|candidate| candidate["platform"] != "linux-x64");
+        .retain(|candidate| candidate["platform"] != platform);
     merged["binaries"]
         .as_array_mut()
         .expect("the staged manifest's binaries")
@@ -703,14 +718,14 @@ fn assembled_archives_carry_the_platform_alias_the_reader_demands() {
     assert_eq!(json["version"], "v1.2.3");
     let release = parse_channel_manifest(&bytes).expect("the reader accepts the manifest");
     assert_eq!(release.version, "1.2.3");
-    // The reader keeps every known platform's row; the assembled linux-x64
+    // The reader keeps every known platform's row; the assembled host-platform
     // row is one of the five.
     assert_eq!(release.artifacts.len(), 5);
     let artifact: &ReleaseArtifact = release
         .artifacts
         .iter()
-        .find(|artifact| artifact.platform == "linux-x64")
+        .find(|artifact| artifact.platform == platform)
         .expect("the assembled row survived the emission");
-    assert_eq!(artifact.file, "prime-agent-1.2.3-linux-x64.tar.gz");
+    assert_eq!(artifact.file, archive_name);
     assert_eq!(artifact.sha256, sha256_hex(&archive_bytes));
 }
