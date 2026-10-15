@@ -132,7 +132,8 @@ fn assert_socket_reusable(socket: &std::path::Path) {
             .expect("socket reuse runtime")
             .block_on(pa_daemon::socket::prepare_socket_path(socket))
             .expect("prepare the stopped supervisor socket for reuse");
-        let listener = std::os::unix::net::UnixListener::bind(socket).expect("rebind supervisor path");
+        let listener =
+            std::os::unix::net::UnixListener::bind(socket).expect("rebind supervisor path");
         drop(std::os::unix::net::UnixStream::connect(socket).expect("connect rebound listener"));
         drop(listener);
         std::fs::remove_file(socket).expect("remove fixture replacement socket");
