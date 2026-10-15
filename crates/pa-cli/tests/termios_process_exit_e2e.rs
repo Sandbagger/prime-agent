@@ -121,7 +121,8 @@ fn diff_view_child_mode() {
 
 // The audit assertions.
 
-/// Resolve the pty slave's device path from the master fd.
+/// Resolve the pty slave path for the Linux `/proc` descriptor audit.
+#[cfg(target_os = "linux")]
 fn pty_slave_path(master: &std::fs::File) -> PathBuf {
     let mut buffer = [0u8; 64];
     // SAFETY: `ptsname_r` writes the NUL-terminated slave path into
@@ -138,6 +139,7 @@ fn pty_slave_path(master: &std::fs::File) -> PathBuf {
 
 /// The fd-set audit: after the TUI exits, NO process may still hold the
 /// pty (a leaked grandchild keeps the pane busy).
+#[cfg(target_os = "linux")]
 fn assert_no_process_holds_the_pty(master: &std::fs::File, context: &str) {
     let slave = pty_slave_path(master);
     let self_pid = std::process::id();
@@ -187,6 +189,9 @@ fn assert_the_shell_flows(master: &mut PtyReader, context: &str) {
 /// Run one route's whole terminal-handback contract.
 fn assert_the_handback_is_whole(harness: &mut DifferentialHarness, context: &str) {
     harness.assert_terminal_state_restored(context);
+    // The process-wide descriptor audit uses Linux `/proc`; terminal state
+    // and flow-control assertions still run on every Unix host.
+    #[cfg(target_os = "linux")]
     assert_no_process_holds_the_pty(&harness.master.file, context);
     assert_the_shell_flows(&mut harness.master, context);
 }
@@ -556,6 +561,7 @@ fn a_suspend_cycle_with_a_ctrl_s_in_the_stopped_window_never_stops_the_shell() {
         after.describe()
     );
     let context = "the suspend-cycle exit";
+    #[cfg(target_os = "linux")]
     assert_no_process_holds_the_pty(&harness.master.file, context);
     assert_the_shell_flows(&mut harness.master, context);
 }

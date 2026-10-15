@@ -16,6 +16,7 @@
 #![cfg(unix)]
 
 use std::fmt::Write as _;
+#[cfg(target_os = "linux")]
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -391,8 +392,9 @@ fn spawn_supervisor(dir: &Path) -> Supervisor {
     // A full workspace run can starve a session worker's boot far past the
     // 30s default connect budget; this keeps session creates deterministic.
     command.env("PA_DAEMON_WORKER_CONNECT_TIMEOUT_MS", "90000");
-    // Die with this test binary: the kernel SIGKILLs a supervisor that gets
-    // reparented to init; the guard's protocol teardown stays the exit path.
+    // On Linux, also die with this test binary through the parent-death signal.
+    // The guard's protocol teardown remains the normal cross-platform exit path.
+    #[cfg(target_os = "linux")]
     unsafe {
         command.pre_exec(move || {
             libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);

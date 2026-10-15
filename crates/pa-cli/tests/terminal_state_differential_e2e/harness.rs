@@ -293,7 +293,7 @@ pub(crate) struct Termios {
     oflag: libc::tcflag_t,
     cflag: libc::tcflag_t,
     lflag: libc::tcflag_t,
-    line: libc::cc_t,
+    line: Option<libc::cc_t>,
     cc: [libc::cc_t; libc::NCCS],
 }
 
@@ -308,7 +308,11 @@ impl Termios {
             oflag: raw.c_oflag,
             cflag: raw.c_cflag,
             lflag: raw.c_lflag,
-            line: raw.c_line,
+            // Linux exposes the discipline selector; BSD termios has no c_line.
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            line: Some(raw.c_line),
+            #[cfg(not(any(target_os = "linux", target_os = "android")))]
+            line: None,
             cc: raw.c_cc,
         }
     }
@@ -529,7 +533,11 @@ pub(crate) fn spawn_child(spec: &ChildSpec, socket: &Path, slave: &OwnedFd) -> C
     // and claim the pty slave as the controlling terminal.
     pub(crate) fn claim_controlling_tty(fd: i32) -> std::io::Result<()> {
         nix::unistd::setsid()?;
-        let rc = unsafe { libc::ioctl(fd, libc::TIOCSCTTY as libc::c_ulong, 0) };
+        #[cfg(target_vendor = "apple")]
+        let request = libc::c_ulong::from(libc::TIOCSCTTY);
+        #[cfg(not(target_vendor = "apple"))]
+        let request = libc::TIOCSCTTY;
+        let rc = unsafe { libc::ioctl(fd, request, 0) };
         if rc < 0 {
             return Err(std::io::Error::last_os_error());
         }
