@@ -137,6 +137,13 @@ launch path must keep that test red-first.
   started+completed; `/model` shows the selector; a refinement shows its decoration). A feature
   that "works" but was never diffed against the TS binary does not pass review. If TS shows it,
   Rust shows it identically; if Rust shows something TS does not, that is also a parity bug.
+- The CLI corpus has explicit versioned 0.9.8-to-0.10 contracts in
+  [docs/cli-versioned-contract.md](docs/cli-versioned-contract.md). For those
+  named migration cases, assert exact expected exit code, stdout and stderr
+  independently for both binaries; a mismatch alone never passes. Shared cases
+  remain differential. New exceptions require a concrete behavior decision and
+  provenance, paired expectations, and regression checks; never suppress a
+  failing case or combine output channels to obtain parity.
 - PRs must state ownership compliance (crate README scope/non-goals/public API, dependency
   direction) and classify the change: internals, new `pub` surface, or a new
   dependency/cross-crate re-export. The latter two are architectural changes — an innocent-looking

@@ -11,7 +11,9 @@
 
 //! Differential CLI tests: run a corpus of invocations against both the
 //! installed TypeScript `prime-agent` binary (ground truth for parity) and
-//! the Rust binary, and assert matching exit codes, stdout, and stderr.
+//! the Rust binary. Shared contracts match byte-for-byte; the explicitly
+//! versioned 0.9.8 -> 0.10 changes assert exact outputs on BOTH sides.
+//! See docs/cli-versioned-contract.md for provenance and decisions.
 //! Corpus policy: only invocations fully determined by the CLI surface
 //! itself (help/version, validation errors, routing errors, MCP settings
 //! reads/writes); the test is skipped when the TS binary is not installed.
@@ -317,10 +319,68 @@ fn ts_binary() -> Option<PathBuf> {
     (!path.is_empty()).then(|| PathBuf::from(path))
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize)]
 struct InvocationOutput {
     exit_code: Option<i32>,
     stdout: String,
     stderr: String,
+}
+
+#[derive(serde::Deserialize)]
+struct VersionedCase {
+    argv: Vec<String>,
+    typescript: InvocationOutput,
+    native: InvocationOutput,
+}
+
+fn versioned_cases() -> Vec<VersionedCase> {
+    serde_json::from_str(include_str!("fixtures/cli-ts-0.9.8-native-0.10.json"))
+        .expect("versioned CLI contract")
+}
+
+fn contract_output(output: &InvocationOutput, sandbox_roots: &[&Path]) -> InvocationOutput {
+    let paths = |text: &str| {
+        let mut text = text.to_string();
+        for root in sandbox_roots {
+            text = text.replace(&root.display().to_string(), "<SANDBOX>");
+        }
+        normalize_docs_paths(&text)
+    };
+    InvocationOutput {
+        exit_code: output.exit_code,
+        stdout: paths(&output.stdout),
+        stderr: paths(&output.stderr),
+    }
+}
+
+fn matches_cli_contract(
+    cases: &[VersionedCase],
+    argv: &[&str],
+    ts: &InvocationOutput,
+    native: &InvocationOutput,
+    roots: &[&Path],
+) -> bool {
+    if let Some(case) = cases.iter().find(|case| case.argv == argv) {
+        // Never accept a mismatch alone: independently pin both observable
+        // contracts, including channel and exit code. Versions stay literal.
+        return contract_output(ts, roots) == contract_output(&case.typescript, &[])
+            && contract_output(native, roots) == contract_output(&case.native, &[]);
+    }
+    ts.exit_code == native.exit_code
+        && normalize(&ts.stdout, roots) == normalize(&native.stdout, roots)
+        && normalize(&ts.stderr, roots) == normalize(&native.stderr, roots)
+}
+
+fn assert_ts_reference(binary: &Path, sandbox: &Path) {
+    assert_eq!(
+        run(binary, &["--version"], sandbox),
+        InvocationOutput {
+            exit_code: Some(0),
+            stdout: String::new(),
+            stderr: "0.9.8\n".to_string(),
+        },
+        "the versioned differential requires the genuine TS 0.9.8 reference"
+    );
 }
 
 fn run(binary: &Path, args: &[&str], sandbox: &Path) -> InvocationOutput {
@@ -365,41 +425,27 @@ fn normalize(text: &str, sandbox_roots: &[&Path]) -> String {
     // Docs paths in login guidance resolve to each binary's own install dir
     // (package dir); compare the shape, not the installation location.
     text = normalize_docs_paths(&text);
-    // The `prompt` dump command is a Rust-first addition the TS product has
-    // not adopted yet; normalize its help rows out so the rest of the command
-    // surface still compares equal. When the TS product adopts the command,
-    // drop this normalizer.
-    text = normalize_prompt_command_rows(&text);
     normalize_versions(&text)
-}
-
-/// Remove the `prompt` command row from top-level help (the Rust binary
-/// lists a command the TS binary does not have yet).
-fn normalize_prompt_command_rows(text: &str) -> String {
-    text.lines()
-        .filter(|line| {
-            let trimmed = line.trim_start();
-            !(trimmed.starts_with("prompt")
-                && trimmed.contains("Print the assembled system prompt"))
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 /// Replace `<any dir>/docs/providers.md|models.md` lines with a placeholder.
 fn normalize_docs_paths(text: &str) -> String {
-    text.lines()
+    text.split_inclusive('\n')
         .map(|line| {
-            let trimmed = line.trim_start();
+            let path = line.trim_start().trim_end_matches(['\r', '\n']);
             for doc in ["/docs/providers.md", "/docs/models.md"] {
-                if trimmed.contains(doc) {
-                    return line.replace(trimmed.trim_end(), &format!("<PACKAGE_DOCS>{doc}"));
+                let Some(prefix) = path.strip_suffix(doc) else {
+                    continue;
+                };
+                let absolute = Path::new(prefix).is_absolute()
+                    || matches!(prefix.as_bytes(), [drive, b':', b'/' | b'\\', ..] if drive.is_ascii_alphabetic());
+                if absolute || prefix == "<PACKAGE_DOCS>" {
+                    return line.replacen(path, &format!("<PACKAGE_DOCS>{doc}"), 1);
                 }
             }
             line.to_string()
         })
-        .collect::<Vec<_>>()
-        .join("\n")
+        .collect::<String>()
 }
 
 fn normalize_versions(text: &str) -> String {
@@ -458,15 +504,13 @@ fn differential_corpus_matches_ts_binary() {
     let rs_sandbox = sandbox("rs");
     let sandbox_roots: Vec<&Path> = vec![&ts_sandbox, &rs_sandbox];
 
+    assert_ts_reference(&ts, &ts_sandbox);
+    let contracts = versioned_cases();
     let mut failures: Vec<String> = Vec::new();
     for case in CORPUS {
         let ts_out = run(&ts, case, &ts_sandbox);
         let rs_out = run(&rust, case, &rs_sandbox);
-        let ok = ts_out.exit_code == rs_out.exit_code
-            && normalize(&ts_out.stdout, &sandbox_roots)
-                == normalize(&rs_out.stdout, &sandbox_roots)
-            && normalize(&ts_out.stderr, &sandbox_roots)
-                == normalize(&rs_out.stderr, &sandbox_roots);
+        let ok = matches_cli_contract(&contracts, case, &ts_out, &rs_out, &sandbox_roots);
         if !ok {
             failures.push(format!(
                 "argv: {:?}\n  ts exit {:?} rs exit {:?}\n  ts stdout: {:?}\n  rs stdout: {:?}\n  ts stderr: {:?}\n  rs stderr: {:?}",
@@ -525,6 +569,7 @@ fn differential_env_flag_cases_match_ts_binary() {
     let rs_sandbox = sandbox("rs-env");
     let sandbox_roots: Vec<&Path> = vec![&ts_sandbox, &rs_sandbox];
 
+    assert_ts_reference(&ts, &ts_sandbox);
     // PI_STARTUP_BENCHMARK is rejected outside interactive mode.
     for case in [&["-p", "hi"][..], &["--print"][..], &["--mode", "json"][..]] {
         let ts_out = run_with_env(&ts, case, &ts_sandbox, &[("PI_STARTUP_BENCHMARK", "1")]);
@@ -594,6 +639,7 @@ fn differential_session_export_matches_ts_binary() {
     let ts_sandbox = sandbox("ts-export");
     let rs_sandbox = sandbox("rs-export");
     let sandbox_roots: Vec<&Path> = vec![&ts_sandbox, &rs_sandbox];
+    assert_ts_reference(&ts, &ts_sandbox);
     let fixture = "fixture-session.jsonl";
     for sandbox in [&ts_sandbox, &rs_sandbox] {
         std::fs::write(sandbox.join("cwd").join(fixture), fixture_session())
@@ -610,16 +656,15 @@ fn differential_session_export_matches_ts_binary() {
         &["session", "export", fixture, "out.html"],
         &rs_sandbox,
     );
-    assert_eq!(ts_out.exit_code, rs_out.exit_code, "exit codes");
-    assert_eq!(
-        normalize(&ts_out.stdout, &sandbox_roots),
-        normalize(&rs_out.stdout, &sandbox_roots),
-        "stdout"
-    );
-    assert_eq!(
-        normalize(&ts_out.stderr, &sandbox_roots),
-        normalize(&rs_out.stderr, &sandbox_roots),
-        "stderr"
+    assert!(
+        matches_cli_contract(
+            &versioned_cases(),
+            &["session", "export", fixture, "out.html"],
+            &ts_out,
+            &rs_out,
+            &sandbox_roots,
+        ),
+        "export output contract: TS {ts_out:?}, native {rs_out:?}"
     );
     assert!(
         rs_out.stdout.contains("Exported to: out.html"),
@@ -659,4 +704,69 @@ fn differential_session_export_matches_ts_binary() {
         normalize(&rs_missing.stderr, &sandbox_roots),
         "missing-file stderr"
     );
+}
+
+/// Generated mutations exercise every paired contract, both executables,
+/// every output channel and exit status without a provider or subprocess.
+#[test]
+fn versioned_contract_rejects_output_exit_and_argv_mutations() {
+    let cases = versioned_cases();
+    for case in &cases {
+        let argv: Vec<&str> = case.argv.iter().map(String::as_str).collect();
+        assert!(matches_cli_contract(
+            &cases,
+            &argv,
+            &case.typescript,
+            &case.native,
+            &[]
+        ));
+        for side in 0..2 {
+            for field in 0..3 {
+                for sample in 0..16 {
+                    let mut ts = case.typescript.clone();
+                    let mut native = case.native.clone();
+                    let output = if side == 0 { &mut ts } else { &mut native };
+                    match field {
+                        0 => write!(output.stdout, "MUTATED-{sample}").unwrap(),
+                        1 => write!(output.stderr, "MUTATED-{sample}").unwrap(),
+                        2 => output.exit_code = Some(100 + sample),
+                        _ => unreachable!(),
+                    }
+                    assert!(
+                        !matches_cli_contract(&cases, &argv, &ts, &native, &[]),
+                        "accepted mutation: {argv:?}, side {side}, field {field}, sample {sample}"
+                    );
+                }
+            }
+        }
+        let mut changed_argv = argv.clone();
+        changed_argv.push("--uncontracted-mutation");
+        assert!(!matches_cli_contract(
+            &cases,
+            &changed_argv,
+            &case.typescript,
+            &case.native,
+            &[]
+        ));
+    }
+}
+
+#[test]
+fn docs_path_normalization_preserves_inline_diagnostics() {
+    for doc in ["/docs/providers.md", "/docs/models.md"] {
+        for root in ["/tmp/package", "<PACKAGE_DOCS>", "C:/package"] {
+            let path = format!("{root}{doc}");
+            for changed in [
+                format!("  {path} WRONG\n"),
+                format!("  ERROR {path}\n"),
+                format!("  {path}.unexpected\n"),
+            ] {
+                assert_eq!(normalize_docs_paths(&changed), changed);
+            }
+            assert_eq!(
+                normalize_docs_paths(&format!("  {path}\n")),
+                format!("  <PACKAGE_DOCS>{doc}\n")
+            );
+        }
+    }
 }

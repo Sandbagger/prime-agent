@@ -1,0 +1,483 @@
+[
+  {
+    "argv": [
+      "--version"
+    ],
+    "typescript": {
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "0.9.8\n"
+    },
+    "native": {
+      "exit_code": 0,
+      "stdout": "0.10.0\n",
+      "stderr": ""
+    }
+  },
+  {
+    "argv": [
+      "-v"
+    ],
+    "typescript": {
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "0.9.8\n"
+    },
+    "native": {
+      "exit_code": 0,
+      "stdout": "0.10.0\n",
+      "stderr": ""
+    }
+  },
+  {
+    "argv": [
+      "--help"
+    ],
+    "typescript": {
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "prime-agent - AI coding assistant with a Python REPL tool\n\nUsage:\n  prime-agent [options] [@files...] [message...]\n  prime-agent <command> [args...]\n\nOptions:\nRun options:\n  -p, --print                        Print a response and exit\n  --mode <text|json|rpc|acp|daemon>  Select the output mode (default: text)\n  --cwd <dir>                        Use a specific working directory\n  --offline                          Disable startup network operations\n  --verbose                          Force verbose startup\n  --daemon-socket <path>             Use a specific daemon socket\n\nModel options:\n  --provider <name>    Select a model provider\n  --model <id>         Select a model\n  --api-key <key>      Use an API key for this run\n  --models <patterns>  Set comma-separated models for cycling\n  --thinking <level>   Set reasoning: off, minimal, low, medium, high, xhigh, max\n\nSession options:\n  -c, --continue           Continue the previous session\n  -r, --resume [path|id]   Open the agents view, or resume a saved session\n  --fork <path|id>         Fork a saved session into a new session\n  --session-dir <dir>      Use a custom session directory\n  --no-session             Do not save the session\n  --goal <objective>       Seed a persistent goal for a new root session\n  --goal-token-budget <n>  Set a positive token budget for --goal\n\nTool and resource options:\n  -t, --tools <list>          Allowlist comma-separated tool names\n  -nt, --no-tools             Disable all tools by default\n  -nbt, --no-builtin-tools    Disable built-in tools by default\n  -e, --extension <source>    Load an extension (repeatable)\n  -ne, --no-extensions        Disable extension discovery\n  --skill <path>              Load a skill (repeatable)\n  -ns, --no-skills            Disable skill discovery\n  --prompt-template <path>    Load a prompt template (repeatable)\n  -np, --no-prompt-templates  Disable prompt template discovery\n  --theme <path>              Load a theme (repeatable)\n  --no-themes                 Disable theme discovery\n  -nc, --no-context-files     Disable AGENTS.md and CLAUDE.md discovery\n\nPrompt options:\n  --system-prompt <text>         Replace the default system prompt\n  --append-system-prompt <text>  Append to the system prompt (repeatable)\n  --                             Treat all following arguments as messages\n\nAutonomous options:\n  --autonomous                        Continue until gates pass or a limit is reached\n  --autonomous-gate <command>         Run a completion gate (repeatable)\n  --autonomous-gate-retries <n>       Set positive retries per failed gate (default: 3)\n  --autonomous-gate-timeout-ms <n>    Set positive per-gate timeout in ms (default: 300000)\n  --autonomous-max-continuations <n>  Set positive follow-up limit (default: 3)\n  --autonomous-max-turns <n>          Set positive assistant-turn limit (default: 12)\n  --autonomous-max-tokens <n>         Set positive token limit (default: 80000)\n  --autonomous-timeout-ms <n>         Set positive wall-clock limit in ms (default: 1800000)\n\nHelp:\n  -v, --version  Show version and exit\n  -h, --help     Show this help\n\nCommands:\n  help      Show command help\n  agents    Search and open sessions\n  list      List agents\n  sessions  Show agent status, activity, and usage\n  attach    Attach the interactive UI to an agent\n  stop      Stop an agent\n  rename    Rename an agent\n  send      Send a message to an agent\n  schedule  Manage prompts that run later or on a recurring schedule\n  status    Show background service status\n  doctor    Inspect and safely clean up background services\n  incident  Reconstruct a daemon incident from its logs\n  shutdown  Stop every agent and background service\n  mcp       Manage user MCP servers\n  package   Manage capability packages\n  update    Update Prime Agent\n  model     Inspect available models\n  session   Manage saved sessions\n  config    Configure package resources\n\nRun \"prime-agent help <command>\" for command details.\n"
+    },
+    "native": {
+      "exit_code": 0,
+      "stdout": "prime-agent - AI coding assistant with a Python REPL tool\n\nUsage:\n  prime-agent [options] [@files...] [message...]\n  prime-agent <command> [args...]\n\nOptions:\nRun options:\n  -p, --print                        Print a response and exit\n  --mode <text|json|rpc|acp|daemon>  Select the output mode (default: text)\n  --cwd <dir>                        Use a specific working directory\n  --offline                          Disable startup network operations\n  --verbose                          Force verbose startup\n  --daemon-socket <path>             Use a specific daemon socket\n\nModel options:\n  --provider <name>    Select a model provider\n  --model <id>         Select a model\n  --api-key <key>      Use an API key for this run\n  --models <patterns>  Set comma-separated models for cycling\n  --thinking <level>   Set reasoning: off, minimal, low, medium, high, xhigh, max\n\nSession options:\n  -c, --continue           Continue the previous session\n  -r, --resume [path|id]   Open the agents view, or resume a saved session\n  --fork <path|id>         Fork a saved session into a new session\n  --session-dir <dir>      Use a custom session directory\n  --no-session             Do not save the session\n  --goal <objective>       Seed a persistent goal for a new root session\n  --goal-token-budget <n>  Set a positive token budget for --goal\n\nResource options:\n  --skill <path>              Load a skill (repeatable)\n  -ns, --no-skills            Disable skill discovery\n  --prompt-template <path>    Load a prompt template (repeatable)\n  -np, --no-prompt-templates  Disable prompt template discovery\n  --theme <path>              Load a theme (repeatable)\n  --no-themes                 Disable theme discovery\n  -nc, --no-context-files     Disable AGENTS.md and CLAUDE.md discovery\n\nPrompt options:\n  --system-prompt <text>         Replace the default system prompt\n  --append-system-prompt <text>  Append to the system prompt (repeatable)\n  --                             Treat all following arguments as messages\n\nAutonomous options:\n  --autonomous                        Continue until gates pass or a limit is reached\n  --autonomous-gate <command>         Run a completion gate (repeatable)\n  --autonomous-gate-retries <n>       Set positive retries per failed gate (default: 3)\n  --autonomous-gate-timeout-ms <n>    Set positive per-gate timeout in ms (default: 300000)\n  --autonomous-max-continuations <n>  Set positive follow-up limit (default: 3)\n  --autonomous-max-turns <n>          Set positive assistant-turn limit (default: 12)\n  --autonomous-max-tokens <n>         Set positive token limit (default: 80000)\n  --autonomous-timeout-ms <n>         Set positive wall-clock limit in ms (default: 1800000)\n\nHelp:\n  -v, --version  Show version and exit\n  -h, --help     Show this help\n\nCommands:\n  help       Show command help\n  agents     Search and open sessions\n  list       List agents\n  sessions   Show agent status, activity, and usage\n  attach     Attach the interactive UI to an agent\n  stop       Stop an agent\n  rename     Rename an agent\n  send       Send a message to an agent\n  schedule   Manage prompts that run later or on a recurring schedule\n  status     Show background service status\n  telemetry  Show or change usage telemetry\n  doctor     Inspect and safely clean up background services\n  incident   Reconstruct a daemon incident from its logs\n  shutdown   Stop every agent and background service\n  mcp        Manage user MCP servers\n  package    Manage capability packages\n  update     Update to the latest Rust build (uninstalls the TypeScript version)\n  model      Inspect available models\n  session    Manage saved sessions\n  config     Configure package resources\n  factory    Share and run factory machines from the machine library\n  prompt     Print the assembled system prompt with its layer breakdown\n\nRun \"prime-agent help <command>\" for command details.\n",
+      "stderr": ""
+    }
+  },
+  {
+    "argv": [
+      "-h"
+    ],
+    "typescript": {
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "prime-agent - AI coding assistant with a Python REPL tool\n\nUsage:\n  prime-agent [options] [@files...] [message...]\n  prime-agent <command> [args...]\n\nOptions:\nRun options:\n  -p, --print                        Print a response and exit\n  --mode <text|json|rpc|acp|daemon>  Select the output mode (default: text)\n  --cwd <dir>                        Use a specific working directory\n  --offline                          Disable startup network operations\n  --verbose                          Force verbose startup\n  --daemon-socket <path>             Use a specific daemon socket\n\nModel options:\n  --provider <name>    Select a model provider\n  --model <id>         Select a model\n  --api-key <key>      Use an API key for this run\n  --models <patterns>  Set comma-separated models for cycling\n  --thinking <level>   Set reasoning: off, minimal, low, medium, high, xhigh, max\n\nSession options:\n  -c, --continue           Continue the previous session\n  -r, --resume [path|id]   Open the agents view, or resume a saved session\n  --fork <path|id>         Fork a saved session into a new session\n  --session-dir <dir>      Use a custom session directory\n  --no-session             Do not save the session\n  --goal <objective>       Seed a persistent goal for a new root session\n  --goal-token-budget <n>  Set a positive token budget for --goal\n\nTool and resource options:\n  -t, --tools <list>          Allowlist comma-separated tool names\n  -nt, --no-tools             Disable all tools by default\n  -nbt, --no-builtin-tools    Disable built-in tools by default\n  -e, --extension <source>    Load an extension (repeatable)\n  -ne, --no-extensions        Disable extension discovery\n  --skill <path>              Load a skill (repeatable)\n  -ns, --no-skills            Disable skill discovery\n  --prompt-template <path>    Load a prompt template (repeatable)\n  -np, --no-prompt-templates  Disable prompt template discovery\n  --theme <path>              Load a theme (repeatable)\n  --no-themes                 Disable theme discovery\n  -nc, --no-context-files     Disable AGENTS.md and CLAUDE.md discovery\n\nPrompt options:\n  --system-prompt <text>         Replace the default system prompt\n  --append-system-prompt <text>  Append to the system prompt (repeatable)\n  --                             Treat all following arguments as messages\n\nAutonomous options:\n  --autonomous                        Continue until gates pass or a limit is reached\n  --autonomous-gate <command>         Run a completion gate (repeatable)\n  --autonomous-gate-retries <n>       Set positive retries per failed gate (default: 3)\n  --autonomous-gate-timeout-ms <n>    Set positive per-gate timeout in ms (default: 300000)\n  --autonomous-max-continuations <n>  Set positive follow-up limit (default: 3)\n  --autonomous-max-turns <n>          Set positive assistant-turn limit (default: 12)\n  --autonomous-max-tokens <n>         Set positive token limit (default: 80000)\n  --autonomous-timeout-ms <n>         Set positive wall-clock limit in ms (default: 1800000)\n\nHelp:\n  -v, --version  Show version and exit\n  -h, --help     Show this help\n\nCommands:\n  help      Show command help\n  agents    Search and open sessions\n  list      List agents\n  sessions  Show agent status, activity, and usage\n  attach    Attach the interactive UI to an agent\n  stop      Stop an agent\n  rename    Rename an agent\n  send      Send a message to an agent\n  schedule  Manage prompts that run later or on a recurring schedule\n  status    Show background service status\n  doctor    Inspect and safely clean up background services\n  incident  Reconstruct a daemon incident from its logs\n  shutdown  Stop every agent and background service\n  mcp       Manage user MCP servers\n  package   Manage capability packages\n  update    Update Prime Agent\n  model     Inspect available models\n  session   Manage saved sessions\n  config    Configure package resources\n\nRun \"prime-agent help <command>\" for command details.\n"
+    },
+    "native": {
+      "exit_code": 0,
+      "stdout": "prime-agent - AI coding assistant with a Python REPL tool\n\nUsage:\n  prime-agent [options] [@files...] [message...]\n  prime-agent <command> [args...]\n\nOptions:\nRun options:\n  -p, --print                        Print a response and exit\n  --mode <text|json|rpc|acp|daemon>  Select the output mode (default: text)\n  --cwd <dir>                        Use a specific working directory\n  --offline                          Disable startup network operations\n  --verbose                          Force verbose startup\n  --daemon-socket <path>             Use a specific daemon socket\n\nModel options:\n  --provider <name>    Select a model provider\n  --model <id>         Select a model\n  --api-key <key>      Use an API key for this run\n  --models <patterns>  Set comma-separated models for cycling\n  --thinking <level>   Set reasoning: off, minimal, low, medium, high, xhigh, max\n\nSession options:\n  -c, --continue           Continue the previous session\n  -r, --resume [path|id]   Open the agents view, or resume a saved session\n  --fork <path|id>         Fork a saved session into a new session\n  --session-dir <dir>      Use a custom session directory\n  --no-session             Do not save the session\n  --goal <objective>       Seed a persistent goal for a new root session\n  --goal-token-budget <n>  Set a positive token budget for --goal\n\nResource options:\n  --skill <path>              Load a skill (repeatable)\n  -ns, --no-skills            Disable skill discovery\n  --prompt-template <path>    Load a prompt template (repeatable)\n  -np, --no-prompt-templates  Disable prompt template discovery\n  --theme <path>              Load a theme (repeatable)\n  --no-themes                 Disable theme discovery\n  -nc, --no-context-files     Disable AGENTS.md and CLAUDE.md discovery\n\nPrompt options:\n  --system-prompt <text>         Replace the default system prompt\n  --append-system-prompt <text>  Append to the system prompt (repeatable)\n  --                             Treat all following arguments as messages\n\nAutonomous options:\n  --autonomous                        Continue until gates pass or a limit is reached\n  --autonomous-gate <command>         Run a completion gate (repeatable)\n  --autonomous-gate-retries <n>       Set positive retries per failed gate (default: 3)\n  --autonomous-gate-timeout-ms <n>    Set positive per-gate timeout in ms (default: 300000)\n  --autonomous-max-continuations <n>  Set positive follow-up limit (default: 3)\n  --autonomous-max-turns <n>          Set positive assistant-turn limit (default: 12)\n  --autonomous-max-tokens <n>         Set positive token limit (default: 80000)\n  --autonomous-timeout-ms <n>         Set positive wall-clock limit in ms (default: 1800000)\n\nHelp:\n  -v, --version  Show version and exit\n  -h, --help     Show this help\n\nCommands:\n  help       Show command help\n  agents     Search and open sessions\n  list       List agents\n  sessions   Show agent status, activity, and usage\n  attach     Attach the interactive UI to an agent\n  stop       Stop an agent\n  rename     Rename an agent\n  send       Send a message to an agent\n  schedule   Manage prompts that run later or on a recurring schedule\n  status     Show background service status\n  telemetry  Show or change usage telemetry\n  doctor     Inspect and safely clean up background services\n  incident   Reconstruct a daemon incident from its logs\n  shutdown   Stop every agent and background service\n  mcp        Manage user MCP servers\n  package    Manage capability packages\n  update     Update to the latest Rust build (uninstalls the TypeScript version)\n  model      Inspect available models\n  session    Manage saved sessions\n  config     Configure package resources\n  factory    Share and run factory machines from the machine library\n  prompt     Print the assembled system prompt with its layer breakdown\n\nRun \"prime-agent help <command>\" for command details.\n",
+      "stderr": ""
+    }
+  },
+  {
+    "argv": [
+      "help"
+    ],
+    "typescript": {
+      "exit_code": 0,
+      "stdout": "prime-agent - AI coding assistant with a Python REPL tool\n\nUsage:\n  prime-agent [options] [@files...] [message...]\n  prime-agent <command> [args...]\n\nOptions:\nRun options:\n  -p, --print                        Print a response and exit\n  --mode <text|json|rpc|acp|daemon>  Select the output mode (default: text)\n  --cwd <dir>                        Use a specific working directory\n  --offline                          Disable startup network operations\n  --verbose                          Force verbose startup\n  --daemon-socket <path>             Use a specific daemon socket\n\nModel options:\n  --provider <name>    Select a model provider\n  --model <id>         Select a model\n  --api-key <key>      Use an API key for this run\n  --models <patterns>  Set comma-separated models for cycling\n  --thinking <level>   Set reasoning: off, minimal, low, medium, high, xhigh, max\n\nSession options:\n  -c, --continue           Continue the previous session\n  -r, --resume [path|id]   Open the agents view, or resume a saved session\n  --fork <path|id>         Fork a saved session into a new session\n  --session-dir <dir>      Use a custom session directory\n  --no-session             Do not save the session\n  --goal <objective>       Seed a persistent goal for a new root session\n  --goal-token-budget <n>  Set a positive token budget for --goal\n\nTool and resource options:\n  -t, --tools <list>          Allowlist comma-separated tool names\n  -nt, --no-tools             Disable all tools by default\n  -nbt, --no-builtin-tools    Disable built-in tools by default\n  -e, --extension <source>    Load an extension (repeatable)\n  -ne, --no-extensions        Disable extension discovery\n  --skill <path>              Load a skill (repeatable)\n  -ns, --no-skills            Disable skill discovery\n  --prompt-template <path>    Load a prompt template (repeatable)\n  -np, --no-prompt-templates  Disable prompt template discovery\n  --theme <path>              Load a theme (repeatable)\n  --no-themes                 Disable theme discovery\n  -nc, --no-context-files     Disable AGENTS.md and CLAUDE.md discovery\n\nPrompt options:\n  --system-prompt <text>         Replace the default system prompt\n  --append-system-prompt <text>  Append to the system prompt (repeatable)\n  --                             Treat all following arguments as messages\n\nAutonomous options:\n  --autonomous                        Continue until gates pass or a limit is reached\n  --autonomous-gate <command>         Run a completion gate (repeatable)\n  --autonomous-gate-retries <n>       Set positive retries per failed gate (default: 3)\n  --autonomous-gate-timeout-ms <n>    Set positive per-gate timeout in ms (default: 300000)\n  --autonomous-max-continuations <n>  Set positive follow-up limit (default: 3)\n  --autonomous-max-turns <n>          Set positive assistant-turn limit (default: 12)\n  --autonomous-max-tokens <n>         Set positive token limit (default: 80000)\n  --autonomous-timeout-ms <n>         Set positive wall-clock limit in ms (default: 1800000)\n\nHelp:\n  -v, --version  Show version and exit\n  -h, --help     Show this help\n\nCommands:\n  help      Show command help\n  agents    Search and open sessions\n  list      List agents\n  sessions  Show agent status, activity, and usage\n  attach    Attach the interactive UI to an agent\n  stop      Stop an agent\n  rename    Rename an agent\n  send      Send a message to an agent\n  schedule  Manage prompts that run later or on a recurring schedule\n  status    Show background service status\n  doctor    Inspect and safely clean up background services\n  incident  Reconstruct a daemon incident from its logs\n  shutdown  Stop every agent and background service\n  mcp       Manage user MCP servers\n  package   Manage capability packages\n  update    Update Prime Agent\n  model     Inspect available models\n  session   Manage saved sessions\n  config    Configure package resources\n\nRun \"prime-agent help <command>\" for command details.\n",
+      "stderr": ""
+    },
+    "native": {
+      "exit_code": 0,
+      "stdout": "prime-agent - AI coding assistant with a Python REPL tool\n\nUsage:\n  prime-agent [options] [@files...] [message...]\n  prime-agent <command> [args...]\n\nOptions:\nRun options:\n  -p, --print                        Print a response and exit\n  --mode <text|json|rpc|acp|daemon>  Select the output mode (default: text)\n  --cwd <dir>                        Use a specific working directory\n  --offline                          Disable startup network operations\n  --verbose                          Force verbose startup\n  --daemon-socket <path>             Use a specific daemon socket\n\nModel options:\n  --provider <name>    Select a model provider\n  --model <id>         Select a model\n  --api-key <key>      Use an API key for this run\n  --models <patterns>  Set comma-separated models for cycling\n  --thinking <level>   Set reasoning: off, minimal, low, medium, high, xhigh, max\n\nSession options:\n  -c, --continue           Continue the previous session\n  -r, --resume [path|id]   Open the agents view, or resume a saved session\n  --fork <path|id>         Fork a saved session into a new session\n  --session-dir <dir>      Use a custom session directory\n  --no-session             Do not save the session\n  --goal <objective>       Seed a persistent goal for a new root session\n  --goal-token-budget <n>  Set a positive token budget for --goal\n\nResource options:\n  --skill <path>              Load a skill (repeatable)\n  -ns, --no-skills            Disable skill discovery\n  --prompt-template <path>    Load a prompt template (repeatable)\n  -np, --no-prompt-templates  Disable prompt template discovery\n  --theme <path>              Load a theme (repeatable)\n  --no-themes                 Disable theme discovery\n  -nc, --no-context-files     Disable AGENTS.md and CLAUDE.md discovery\n\nPrompt options:\n  --system-prompt <text>         Replace the default system prompt\n  --append-system-prompt <text>  Append to the system prompt (repeatable)\n  --                             Treat all following arguments as messages\n\nAutonomous options:\n  --autonomous                        Continue until gates pass or a limit is reached\n  --autonomous-gate <command>         Run a completion gate (repeatable)\n  --autonomous-gate-retries <n>       Set positive retries per failed gate (default: 3)\n  --autonomous-gate-timeout-ms <n>    Set positive per-gate timeout in ms (default: 300000)\n  --autonomous-max-continuations <n>  Set positive follow-up limit (default: 3)\n  --autonomous-max-turns <n>          Set positive assistant-turn limit (default: 12)\n  --autonomous-max-tokens <n>         Set positive token limit (default: 80000)\n  --autonomous-timeout-ms <n>         Set positive wall-clock limit in ms (default: 1800000)\n\nHelp:\n  -v, --version  Show version and exit\n  -h, --help     Show this help\n\nCommands:\n  help       Show command help\n  agents     Search and open sessions\n  list       List agents\n  sessions   Show agent status, activity, and usage\n  attach     Attach the interactive UI to an agent\n  stop       Stop an agent\n  rename     Rename an agent\n  send       Send a message to an agent\n  schedule   Manage prompts that run later or on a recurring schedule\n  status     Show background service status\n  telemetry  Show or change usage telemetry\n  doctor     Inspect and safely clean up background services\n  incident   Reconstruct a daemon incident from its logs\n  shutdown   Stop every agent and background service\n  mcp        Manage user MCP servers\n  package    Manage capability packages\n  update     Update to the latest Rust build (uninstalls the TypeScript version)\n  model      Inspect available models\n  session    Manage saved sessions\n  config     Configure package resources\n  factory    Share and run factory machines from the machine library\n  prompt     Print the assembled system prompt with its layer breakdown\n\nRun \"prime-agent help <command>\" for command details.\n",
+      "stderr": ""
+    }
+  },
+  {
+    "argv": [
+      "help",
+      "package"
+    ],
+    "typescript": {
+      "exit_code": 0,
+      "stdout": "Usage:\n  prime-agent package <install|remove|list|update>\n\nManage capability packages.\n\nPackages can provide extensions, skills, prompts, and themes.\n\nCommands:\n  install  Install a capability package\n  remove   Remove a capability package\n  list     List installed capability packages\n  update   Update capability packages\n",
+      "stderr": ""
+    },
+    "native": {
+      "exit_code": 0,
+      "stdout": "Usage:\n  prime-agent package <install|remove|list|update>\n\nManage capability packages.\n\nPackages can provide skills, prompts, and themes.\n\nCommands:\n  install  Install a capability package\n  remove   Remove a capability package\n  list     List installed capability packages\n  update   Update capability packages\n",
+      "stderr": ""
+    }
+  },
+  {
+    "argv": [
+      "help",
+      "update"
+    ],
+    "typescript": {
+      "exit_code": 0,
+      "stdout": "Usage:\n  prime-agent update [--force] [--rollback] [--nightly|--stable]\n\nUpdate Prime Agent.\n\nOptions:\n  --force     Reinstall even if the current version is the latest on the channel\n  --rollback  Restore the previous compiled release\n  --nightly   Switch updates to the nightly channel (unreleased builds, may be broken)\n  --stable    Return updates to the stable channel\n",
+      "stderr": ""
+    },
+    "native": {
+      "exit_code": 0,
+      "stdout": "Usage:\n  prime-agent update [--check] [--nightly|--stable]\n\nUpdate to the latest Rust build (uninstalls the TypeScript version).\n\nMove from the TypeScript version to the Rust port in one step: `prime-agent update` fetches the update channel's installer (stable: https://app.primeintellect.ai/prime-agent/install.sh; nightly: install-beta.sh from the release download base \u2014 never a GitHub raw or workflow URL) and runs it, which uninstalls the TypeScript version and installs the latest Rust build; your sessions and configuration (~/.prime/agent) are never touched. Restart prime-agent after the update to run the new build. This command exists only in the Rust binary \u2014 the TypeScript version does not have it; the move happens when you run the installer's curl|sh URL (the README's Install section) or `prime-agent update` (after the Rust install exists).\n\nOptions:\n  --check  Print the update channel's latest release vs the running version, without installing\n  --force     Reinstall the latest build of the channel\n  --rollback  Restore the previous version the last update kept\n  --nightly   Switch updates to the nightly channel (the latest main build)\n  --stable    Return updates to the stable channel\n  --archive <path>  Install a local release archive\n  --source <url>     The https:// origin recorded as the release's install source (managed installs; required there with --archive)\n",
+      "stderr": ""
+    }
+  },
+  {
+    "argv": [
+      "--autonomous-max-turns",
+      "0"
+    ],
+    "typescript": {
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Error: --autonomous-max-turns must be a positive integer\n"
+    },
+    "native": {
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Error: --autonomous-max-turns must be a positive integer between 1 and u32::MAX (4294967295)\n"
+    }
+  },
+  {
+    "argv": [
+      "--autonomous-max-turns",
+      "abc"
+    ],
+    "typescript": {
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Error: --autonomous-max-turns must be a positive integer\n"
+    },
+    "native": {
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Error: --autonomous-max-turns must be a positive integer between 1 and u32::MAX (4294967295)\n"
+    }
+  },
+  {
+    "argv": [
+      "--mode",
+      "rpc",
+      "@file.txt"
+    ],
+    "typescript": {
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Error: @file arguments are not supported in RPC or daemon mode\n"
+    },
+    "native": {
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Error: @file arguments are not supported in RPC, daemon, or ACP mode\n"
+    }
+  },
+  {
+    "argv": [
+      "--mode",
+      "daemon",
+      "@file.txt"
+    ],
+    "typescript": {
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Error: @file arguments are not supported in RPC or daemon mode\n"
+    },
+    "native": {
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Error: @file arguments are not supported in RPC, daemon, or ACP mode\n"
+    }
+  },
+  {
+    "argv": [
+      "model",
+      "list"
+    ],
+    "typescript": {
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "No models available. Use /login to log into a provider via OAuth or API key. See:\n  <PACKAGE_DOCS>/docs/providers.md\n  <PACKAGE_DOCS>/docs/models.md\n"
+    },
+    "native": {
+      "exit_code": 0,
+      "stdout": "No models available. Use /login to log into a provider via OAuth or API key. See:\n  <PACKAGE_DOCS>/docs/providers.md\n  <PACKAGE_DOCS>/docs/models.md\n",
+      "stderr": ""
+    }
+  },
+  {
+    "argv": [
+      "model",
+      "list",
+      "gpt"
+    ],
+    "typescript": {
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "No models available. Use /login to log into a provider via OAuth or API key. See:\n  <PACKAGE_DOCS>/docs/providers.md\n  <PACKAGE_DOCS>/docs/models.md\n"
+    },
+    "native": {
+      "exit_code": 0,
+      "stdout": "No models available. Use /login to log into a provider via OAuth or API key. See:\n  <PACKAGE_DOCS>/docs/providers.md\n  <PACKAGE_DOCS>/docs/models.md\n",
+      "stderr": ""
+    }
+  },
+  {
+    "argv": [
+      "model",
+      "list",
+      "claude"
+    ],
+    "typescript": {
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "No models available. Use /login to log into a provider via OAuth or API key. See:\n  <PACKAGE_DOCS>/docs/providers.md\n  <PACKAGE_DOCS>/docs/models.md\n"
+    },
+    "native": {
+      "exit_code": 0,
+      "stdout": "No models available. Use /login to log into a provider via OAuth or API key. See:\n  <PACKAGE_DOCS>/docs/providers.md\n  <PACKAGE_DOCS>/docs/models.md\n",
+      "stderr": ""
+    }
+  },
+  {
+    "argv": [
+      "model",
+      "list",
+      "z-ai"
+    ],
+    "typescript": {
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "No models available. Use /login to log into a provider via OAuth or API key. See:\n  <PACKAGE_DOCS>/docs/providers.md\n  <PACKAGE_DOCS>/docs/models.md\n"
+    },
+    "native": {
+      "exit_code": 0,
+      "stdout": "No models available. Use /login to log into a provider via OAuth or API key. See:\n  <PACKAGE_DOCS>/docs/providers.md\n  <PACKAGE_DOCS>/docs/models.md\n",
+      "stderr": ""
+    }
+  },
+  {
+    "argv": [
+      "model",
+      "list",
+      "zzz-nomatch-xyz"
+    ],
+    "typescript": {
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "No models available. Use /login to log into a provider via OAuth or API key. See:\n  <PACKAGE_DOCS>/docs/providers.md\n  <PACKAGE_DOCS>/docs/models.md\n"
+    },
+    "native": {
+      "exit_code": 0,
+      "stdout": "No models available. Use /login to log into a provider via OAuth or API key. See:\n  <PACKAGE_DOCS>/docs/providers.md\n  <PACKAGE_DOCS>/docs/models.md\n",
+      "stderr": ""
+    }
+  },
+  {
+    "argv": [
+      "model",
+      "list",
+      "--json"
+    ],
+    "typescript": {
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "No models available. Use /login to log into a provider via OAuth or API key. See:\n  <PACKAGE_DOCS>/docs/providers.md\n  <PACKAGE_DOCS>/docs/models.md\n"
+    },
+    "native": {
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Error: Unknown option: --json\n"
+    }
+  },
+  {
+    "argv": [
+      "update",
+      "--self"
+    ],
+    "typescript": {
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Error: An update target is no longer needed.\nUse \"prime-agent update [--force]\".\n"
+    },
+    "native": {
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Error: Unknown option for update: --self\nRun \"prime-agent help update\" for usage.\n"
+    }
+  },
+  {
+    "argv": [
+      "update",
+      "package"
+    ],
+    "typescript": {
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Error: Package updates moved to the package command.\nUse \"prime-agent package update [source]\".\n"
+    },
+    "native": {
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Error: Unknown option for update: package\nRun \"prime-agent help update\" for usage.\n"
+    }
+  },
+  {
+    "argv": [
+      "update",
+      "--extensions"
+    ],
+    "typescript": {
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Error: Package updates moved to the package command.\nUse \"prime-agent package update [source]\".\n"
+    },
+    "native": {
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Error: Unknown option for update: --extensions\nRun \"prime-agent help update\" for usage.\n"
+    }
+  },
+  {
+    "argv": [
+      "update",
+      "--self",
+      "package"
+    ],
+    "typescript": {
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Error: Prime Agent and package updates are now separate.\nRun \"prime-agent update [--force]\" and \"prime-agent package update [source]\" separately.\n"
+    },
+    "native": {
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Error: Unknown option for update: --self\nRun \"prime-agent help update\" for usage.\n"
+    }
+  },
+  {
+    "argv": [
+      "update",
+      "self",
+      "pkg"
+    ],
+    "typescript": {
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Error: Prime Agent and package updates are now separate.\nRun \"prime-agent update [--force]\" and \"prime-agent package update [source]\" separately.\n"
+    },
+    "native": {
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Error: Unknown option for update: self\nRun \"prime-agent help update\" for usage.\n"
+    }
+  },
+  {
+    "argv": [
+      "update",
+      "--force",
+      "--self"
+    ],
+    "typescript": {
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Error: An update target is no longer needed.\nUse \"prime-agent update [--force]\".\n"
+    },
+    "native": {
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Error: Unknown option for update: --self\nRun \"prime-agent help update\" for usage.\n"
+    }
+  },
+  {
+    "argv": [
+      "package",
+      "update",
+      "--self"
+    ],
+    "typescript": {
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Error: Package updates accept only an optional source. Use \"prime-agent update --force\" to update Prime Agent.\n"
+    },
+    "native": {
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Error: Package updates accept only an optional source. Use \"prime-agent update\" to update Prime Agent.\n"
+    }
+  },
+  {
+    "argv": [
+      "package",
+      "update",
+      "--force"
+    ],
+    "typescript": {
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Error: Package updates accept only an optional source. Use \"prime-agent update --force\" to update Prime Agent.\n"
+    },
+    "native": {
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Error: Package updates accept only an optional source. Use \"prime-agent update\" to update Prime Agent.\n"
+    }
+  },
+  {
+    "argv": [
+      "package",
+      "update",
+      "--extension",
+      "x",
+      "--self"
+    ],
+    "typescript": {
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Error: Package updates accept only an optional source. Use \"prime-agent update --force\" to update Prime Agent.\n"
+    },
+    "native": {
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Error: Package updates accept only an optional source. Use \"prime-agent update\" to update Prime Agent.\n"
+    }
+  },
+  {
+    "argv": [
+      "package",
+      "update",
+      "--extension",
+      "x",
+      "y"
+    ],
+    "typescript": {
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Error: Package updates accept only an optional source. Use \"prime-agent update --force\" to update Prime Agent.\n"
+    },
+    "native": {
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Error: Package updates accept only an optional source. Use \"prime-agent update\" to update Prime Agent.\n"
+    }
+  },
+  {
+    "argv": [
+      "package",
+      "update",
+      "--extensions",
+      "--rollback"
+    ],
+    "typescript": {
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Error: Package updates accept only an optional source. Use \"prime-agent update --force\" to update Prime Agent.\n"
+    },
+    "native": {
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Error: Package updates accept only an optional source. Use \"prime-agent update\" to update Prime Agent.\n"
+    }
+  },
+  {
+    "argv": [
+      "session",
+      "export",
+      "fixture-session.jsonl",
+      "out.html"
+    ],
+    "typescript": {
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "Exported to: out.html\n"
+    },
+    "native": {
+      "exit_code": 0,
+      "stdout": "Exported to: out.html\n",
+      "stderr": ""
+    }
+  }
+]
