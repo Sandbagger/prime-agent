@@ -97,7 +97,7 @@ impl EventPump {
         if let Some(telemetry) = self.telemetry.lock().unwrap().as_mut() {
             if let Ok(value) = serde_json::from_slice::<Value>(&frame.payload) {
                 if let Some(event) = native_telemetry::event_fact(&value) {
-                    telemetry.event(event);
+                    telemetry.event(&event);
                 }
             }
         }

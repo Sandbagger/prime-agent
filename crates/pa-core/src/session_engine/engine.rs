@@ -176,6 +176,14 @@ pub async fn create_session(config: SessionEngineConfig) -> anyhow::Result<Sessi
 
 /// Assemble a local host with an explicit tool-exposure policy. Disabling tools
 /// also prevents injected ipython and snapshot-triggered kernel prewarm.
+///
+/// # Errors
+///
+/// Returns an error when MCP gating, resource loading, or runtime bootstrap fails.
+///
+/// # Panics
+///
+/// Panics if the MCP manager mutex is poisoned while wiring telemetry reporting.
 pub async fn create_session_with_tool_policy(
     mut config: SessionEngineConfig,
     tools_enabled: bool,
