@@ -28,7 +28,7 @@ Rewrite all nine copied editable `.pth` files to absolute paths inside `<candida
 
 Reject unexpected editable hooks and review every other `.pth` hook. The existing `_virtualenv.pth` hook imports `_virtualenv`; it is not a skill path. Earlier candidates retained skill paths into the mutable TypeScript installation even though their `rlm` package was copied. Copying `rlm` alone therefore does not establish runtime independence.
 
-The candidate still depends on the installed uv-managed CPython interpreter referenced by its `bin/python` symlink and `pyvenv.cfg`. Record that dependency. Copied console-script shebangs are not used; launch Python through the candidate's explicit `runtime/bin/python`.
+The candidate still depends on the installed uv-managed CPython interpreter. Resolve its executable to the concrete versioned path, pin the cloned `bin/python` symlink to that resolved path, and pin `pyvenv.cfg` home to its parent directory. Record and verify the resolved executable path, SHA256, Python version and `pyvenv.cfg` SHA256. A mutable uv alias does not bind the interpreter used during qualification. Copied console-script shebangs are not used; launch Python through the candidate's explicit `runtime/bin/python`.
 
 Create a regular executable `prime-agent` shell launcher exporting:
 
