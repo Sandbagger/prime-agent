@@ -175,7 +175,7 @@
         "git config user.name t",
         "echo original > tracked.txt",
         "git add tracked.txt",
-        "GIT_AUTHOR_DATE='2005-04-07T22:13:13' GIT_COMMITTER_DATE='2005-04-07T22:13:13' git commit -qm init",
+        "GIT_AUTHOR_DATE='2005-04-07T22:13:13+00:00' GIT_COMMITTER_DATE='2005-04-07T22:13:13+00:00' git commit -qm init",
         "echo modified > tracked.txt",
         "echo untracked > untracked.txt"
       ],
@@ -195,7 +195,7 @@
         "git config user.name t",
         "echo original > tracked.txt",
         "git add tracked.txt",
-        "GIT_AUTHOR_DATE='2005-04-07T22:13:13' GIT_COMMITTER_DATE='2005-04-07T22:13:13' git commit -qm init",
+        "GIT_AUTHOR_DATE='2005-04-07T22:13:13+00:00' GIT_COMMITTER_DATE='2005-04-07T22:13:13+00:00' git commit -qm init",
         "echo modified > tracked.txt",
         "echo untracked > untracked.txt"
       ],
@@ -217,7 +217,7 @@
         "git config user.name t",
         "echo original > tracked.txt",
         "git add tracked.txt",
-        "GIT_AUTHOR_DATE='2005-04-07T22:13:13' GIT_COMMITTER_DATE='2005-04-07T22:13:13' git commit -qm init"
+        "GIT_AUTHOR_DATE='2005-04-07T22:13:13+00:00' GIT_COMMITTER_DATE='2005-04-07T22:13:13+00:00' git commit -qm init"
       ],
       "command": "git reset --hard",
       "result": {
@@ -248,9 +248,9 @@
         "git config user.name t",
         "echo original > tracked.txt",
         "git add tracked.txt",
-        "GIT_AUTHOR_DATE='2005-04-07T22:13:13' GIT_COMMITTER_DATE='2005-04-07T22:13:13' git commit -qm init",
+        "GIT_AUTHOR_DATE='2005-04-07T22:13:13+00:00' GIT_COMMITTER_DATE='2005-04-07T22:13:13+00:00' git commit -qm init",
         "mkdir sub",
-        "cd sub && git init -q . && git config user.email t@t && git config user.name t && echo orig > subfile.txt && git add subfile.txt && GIT_AUTHOR_DATE='2005-04-07T22:13:13' GIT_COMMITTER_DATE='2005-04-07T22:13:13' git commit -qm subinit",
+        "cd sub && git init -q . && git config user.email t@t && git config user.name t && echo orig > subfile.txt && git add subfile.txt && GIT_AUTHOR_DATE='2005-04-07T22:13:13+00:00' GIT_COMMITTER_DATE='2005-04-07T22:13:13+00:00' git commit -qm subinit",
         "cd sub && echo dirty > subfile.txt"
       ],
       "command": "cd sub && git checkout -- .",
@@ -269,7 +269,7 @@
         "git config user.name t",
         "echo original > tracked.txt",
         "git add tracked.txt",
-        "GIT_AUTHOR_DATE='2005-04-07T22:13:13' GIT_COMMITTER_DATE='2005-04-07T22:13:13' git commit -qm init"
+        "GIT_AUTHOR_DATE='2005-04-07T22:13:13+00:00' GIT_COMMITTER_DATE='2005-04-07T22:13:13+00:00' git commit -qm init"
       ],
       "command": "echo done # git reset --hard",
       "result": {
@@ -300,7 +300,7 @@
         "git config user.name t",
         "echo original > tracked.txt",
         "git add tracked.txt",
-        "GIT_AUTHOR_DATE='2005-04-07T22:13:13' GIT_COMMITTER_DATE='2005-04-07T22:13:13' git commit -qm init",
+        "GIT_AUTHOR_DATE='2005-04-07T22:13:13+00:00' GIT_COMMITTER_DATE='2005-04-07T22:13:13+00:00' git commit -qm init",
         "echo modified > tracked.txt",
         "echo untracked > untracked.txt"
       ],
