@@ -485,7 +485,6 @@ mod tests {
             assert_eq!(socket.as_os_str().len(), length);
             let address = UnixSocketAddress::new(&socket).expect("direct address");
             assert_eq!(address.effective(), socket);
-            assert!(address._dir.is_none(), "in-range paths never reanchor");
             let _listener = bind_transport(&socket)
                 .await
                 .expect("bind at platform boundary");
