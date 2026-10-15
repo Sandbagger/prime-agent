@@ -3,6 +3,75 @@
 //! `process_start_id` is the pid-reuse identity: a match proves the pid still names the same
 //! process; `None` means owners trust liveness checks alone.
 
+/// Current resident memory of this process in bytes, rather than its high-water mark.
+///
+/// # Errors
+/// Returns the kernel query or parse error; unsupported platforms return `Unsupported`.
+pub fn current_resident_bytes() -> std::io::Result<u64> {
+    #[cfg(target_os = "linux")]
+    {
+        let statm = std::fs::read_to_string("/proc/self/statm")?;
+        let pages = statm
+            .split_whitespace()
+            .nth(1)
+            .and_then(|value| value.parse::<u64>().ok())
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "invalid resident page count",
+                )
+            })?;
+        // SAFETY: sysconf queries a constant and does not dereference pointers.
+        let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+        let page_size = u64::try_from(page_size)
+            .ok()
+            .filter(|size| *size > 0)
+            .ok_or_else(|| std::io::Error::other("invalid system page size"))?;
+        pages.checked_mul(page_size).ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "resident byte count overflow",
+            )
+        })
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let mut info = std::mem::MaybeUninit::<libc::proc_taskinfo>::uninit();
+        let size = i32::try_from(std::mem::size_of::<libc::proc_taskinfo>()).map_err(|_| {
+            std::io::Error::other("process memory information exceeds kernel buffer size")
+        })?;
+        // SAFETY: the buffer is aligned and writable for exactly `size` bytes. We only
+        // read it when the kernel reports that the complete structure was initialized.
+        let read = unsafe {
+            libc::proc_pidinfo(
+                libc::getpid(),
+                libc::PROC_PIDTASKINFO,
+                0,
+                info.as_mut_ptr().cast(),
+                size,
+            )
+        };
+        if read <= 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        if read != size {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "incomplete process memory information",
+            ));
+        }
+        // SAFETY: the successful complete kernel query initialized every field.
+        Ok(unsafe { info.assume_init() }.pti_resident_size)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "current resident memory is unavailable on this platform",
+        ))
+    }
+}
+
 /// The pid-reuse identity: `/proc/<pid>/stat` field 22 (starttime) as
 /// `proc:<starttime>`, else the portable `ps:<lstart>` identity (TS
 /// `getPsProcessStartId`) - rendered in-process from the kernel process

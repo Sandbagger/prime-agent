@@ -1,7 +1,6 @@
 //! TUI RSS stability regression: a long scripted session through the real
 //! interactive loop must not grow memory monotonically; a sampler reads
-//! `/proc/self/statm` and asserts a plateau in the last quarter. Linux-only
-//! by construction (compiles to nothing elsewhere).
+//! the platform's current resident-byte count and asserts a plateau in the last quarter.
 #![cfg(unix)]
 // Casts: structurally bounded terminal-layout arithmetic; guarded conversions add panic paths.
 #![allow(
@@ -32,14 +31,7 @@ use serde_json::{json, Value};
 
 /// Resident memory of this process in bytes.
 fn resident_bytes() -> u64 {
-    let statm = std::fs::read_to_string("/proc/self/statm").expect("read statm");
-    let pages: u64 = statm
-        .split_whitespace()
-        .nth(1)
-        .expect("resident field")
-        .parse()
-        .expect("page count");
-    pages * 4096
+    pa_types::platform::process::current_resident_bytes().expect("read current resident bytes")
 }
 
 /// The plateau allowance: transient allocator growth plus the headless harness's own retained
