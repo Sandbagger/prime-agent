@@ -13,6 +13,10 @@ pub struct Observer {
 }
 
 impl Observer {
+    /// Subscribe to local lifecycle events when native policy is enabled.
+    ///
+    /// # Panics
+    /// The subscription callback panics if the telemetry queue mutex is poisoned.
     pub async fn attach(engine: &Arc<SessionEngine>) -> Self {
         let queue: Arc<std::sync::Mutex<Option<crate::native_telemetry::Telemetry>>> =
             Arc::new(std::sync::Mutex::new(None));
@@ -30,7 +34,7 @@ impl Observer {
                             {
                                 if let Some(fact) = local_event_fact(&frame) {
                                     if let Some(queue) = queue.lock().unwrap().as_mut() {
-                                        queue.event(fact);
+                                        queue.event(&fact);
                                     }
                                 }
                             }
@@ -49,6 +53,13 @@ impl Observer {
     }
 
     /// Called only at the trusted operator prompt boundary, before admission.
+    ///
+    /// # Errors
+    /// Returns an error if the session is busy, policy re-arming fails, or the
+    /// telemetry runtime is unavailable.
+    ///
+    /// # Panics
+    /// Panics if the telemetry queue mutex is poisoned.
     pub async fn begin(
         &self,
         engine: &Arc<SessionEngine>,
@@ -91,6 +102,10 @@ impl Observer {
         Ok(())
     }
 
+    /// Unsubscribe and drain the local telemetry queue.
+    ///
+    /// # Panics
+    /// Panics if the telemetry queue mutex is poisoned.
     pub async fn close(&mut self) {
         if let Some(subscription) = self.subscription.take() {
             subscription.unsubscribe().await;
@@ -103,6 +118,7 @@ impl Observer {
 }
 
 /// A launch owns one immutable root tuple. Replacements require a new launch.
+#[must_use]
 pub fn authority_change(command: &str) -> bool {
     matches!(
         command,

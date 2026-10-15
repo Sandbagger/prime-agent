@@ -16,6 +16,7 @@ pub struct Telemetry {
 }
 
 impl Telemetry {
+    #[must_use]
     pub fn new() -> Option<Self> {
         if !pa_ai::native_policy::enabled() {
             return None;
@@ -87,10 +88,10 @@ impl Telemetry {
         self.generation = uuid::Uuid::new_v4().to_string();
         self.sequence = 0;
         self.ended = false;
-        self.active_session_id = binding["activeSessionId"]
+        binding["activeSessionId"]
             .as_str()
             .unwrap_or_default()
-            .to_owned();
+            .clone_into(&mut self.active_session_id);
         binding["cursor"] = json!({"generation":self.generation,"sequence":0});
         self.send(
             "telemetry_begin",
@@ -98,7 +99,7 @@ impl Telemetry {
         );
     }
 
-    pub fn event(&mut self, event: Value) {
+    pub fn event(&mut self, event: &Value) {
         match event.get("type").and_then(Value::as_str) {
             Some("agent_end") => self.ended = true,
             Some("agent_start") => self.ended = false,
@@ -185,7 +186,7 @@ mod tests {
             };
             telemetry.begin(json!({"activeSessionId":"root"}), "prompt", 0);
             if ended {
-                telemetry.event(json!({"type":"agent_end","messages":[]}));
+                telemetry.event(&json!({"type":"agent_end","messages":[]}));
             }
             telemetry.close().await;
             assert_eq!(receiver.recv().await.unwrap().0, "telemetry_begin");
@@ -211,7 +212,7 @@ mod tests {
             task: None,
         };
         telemetry.begin(json!({"activeSessionId":"root"}), "prompt", 0);
-        telemetry.event(json!({"type":"agent_start"}));
+        telemetry.event(&json!({"type":"agent_start"}));
         let (op, begin) = receiver.try_recv().unwrap();
         assert_eq!(op, "telemetry_begin");
         let (op, event) = receiver.try_recv().unwrap();
@@ -220,9 +221,9 @@ mod tests {
             event["frame"]["meta"]["cursor"],
             json!({"generation":begin["binding"]["cursor"]["generation"],"sequence":1})
         );
-        telemetry.event(json!({"type":"agent_start"}));
-        telemetry.event(json!({"type":"agent_start"}));
-        telemetry.event(json!({"type":"agent_start"}));
+        telemetry.event(&json!({"type":"agent_start"}));
+        telemetry.event(&json!({"type":"agent_start"}));
+        telemetry.event(&json!({"type":"agent_start"}));
         assert!(telemetry.failed.load(Ordering::SeqCst));
     }
 }

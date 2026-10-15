@@ -74,6 +74,7 @@ pub(crate) struct EventPump {
     next_seq: AtomicU64,
     send_guard: std::sync::Mutex<()>,
     telemetry: std::sync::Mutex<Option<native_telemetry::Telemetry>>,
+    sinks: std::sync::Mutex<Vec<std::sync::Weak<ConnectionSink>>>,
 }
 
 impl EventPump {
@@ -84,7 +85,34 @@ impl EventPump {
             next_seq: AtomicU64::new(0),
             send_guard: std::sync::Mutex::new(()),
             telemetry: std::sync::Mutex::new(None),
+            sinks: std::sync::Mutex::new(Vec::new()),
         }
+    }
+
+    fn register_sink(&self, sink: &Arc<ConnectionSink>) {
+        let mut sinks = self.sinks.lock().unwrap();
+        sinks.retain(|sink| sink.strong_count() > 0);
+        sinks.push(Arc::downgrade(sink));
+    }
+
+    /// The process-exit boundary must flush every live peer, not only the
+    /// supervisor that requested shutdown. One aggregate deadline prevents
+    /// a non-reading peer from holding the worker alive indefinitely.
+    pub(crate) async fn drain_terminal_events(&self, budget: std::time::Duration) -> bool {
+        let gate = self.current_seq();
+        let sinks: Vec<_> = self
+            .sinks
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(std::sync::Weak::upgrade)
+            .collect();
+        tokio::time::timeout(
+            budget,
+            futures::future::join_all(sinks.iter().map(|sink| sink.wait_flushed(gate))),
+        )
+        .await
+        .is_ok()
     }
 
     pub(crate) fn subscribe(&self) -> broadcast::Receiver<Arc<OutboundFrame>> {
@@ -97,7 +125,7 @@ impl EventPump {
         if let Some(telemetry) = self.telemetry.lock().unwrap().as_mut() {
             if let Ok(value) = serde_json::from_slice::<Value>(&frame.payload) {
                 if let Some(event) = native_telemetry::event_fact(&value) {
-                    telemetry.event(event);
+                    telemetry.event(&event);
                 }
             }
         }
@@ -341,6 +369,7 @@ impl Worker {
         let subscription = self.events.subscribe();
         let entry_seq = self.events.current_seq() + 1;
         let sink = Arc::new(ConnectionSink::new(Arc::clone(&writer), entry_seq));
+        self.events.register_sink(&sink);
         // daemon_hello goes out immediately on every connection. The
         // factory lane's advertisement gate reads the settings file
         // (metadata plus a locked read on a cache miss) — off the
@@ -1068,5 +1097,63 @@ impl Worker {
         // that the client detached.
         self.work_notify.notify_one();
         response_success(None, "detach", None)
+    }
+}
+
+#[cfg(test)]
+mod terminal_drain_tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn sink(pump: &EventPump) -> Arc<ConnectionSink> {
+        let writer: Box<dyn pa_types::platform::transport::AsyncWriteHalf> =
+            Box::new(tokio::io::sink());
+        let sink = Arc::new(ConnectionSink::new(
+            Arc::new(tokio::sync::Mutex::new(writer)),
+            1,
+        ));
+        pump.register_sink(&sink);
+        sink
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn terminal_drain_waits_for_peer_after_supervisor_flush() {
+        let pump = Arc::new(EventPump::new());
+        let supervisor = sink(&pump);
+        let peer = sink(&pump);
+        pump.send(OutboundFrame::session_event(
+            br#"{"type":"session_closed"}"#.to_vec(),
+        ));
+        supervisor.mark_flushed(pump.current_seq());
+        let drain = pump.drain_terminal_events(Duration::from_secs(1));
+        tokio::pin!(drain);
+        assert!(
+            matches!(futures::poll!(&mut drain), std::task::Poll::Pending),
+            "supervisor response cannot release an unflushed peer"
+        );
+        peer.mark_flushed(pump.current_seq());
+        assert!(drain.await);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn closed_and_dropped_peers_do_not_hold_terminal_exit() {
+        let pump = EventPump::new();
+        let closed = sink(&pump);
+        let dropped = sink(&pump);
+        pump.send(OutboundFrame::session_event(Vec::new()));
+        closed.mark_closed();
+        drop(dropped);
+        assert!(pump.drain_terminal_events(Duration::from_secs(1)).await);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn terminal_drain_has_one_aggregate_deadline_for_blocked_peers() {
+        let pump = EventPump::new();
+        let _first = sink(&pump);
+        let _second = sink(&pump);
+        pump.send(OutboundFrame::session_event(Vec::new()));
+        let started = tokio::time::Instant::now();
+        assert!(!pump.drain_terminal_events(Duration::from_secs(1)).await);
+        assert_eq!(started.elapsed(), Duration::from_secs(1));
     }
 }

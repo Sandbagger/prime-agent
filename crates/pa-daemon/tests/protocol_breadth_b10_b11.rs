@@ -22,6 +22,7 @@
 #![cfg(unix)]
 
 use std::io::{BufRead, BufReader, Write};
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
@@ -45,9 +46,17 @@ impl Drop for Daemon {
 
 // The timeout panic path cannot wait on the child; the test exits and reaps it.
 #[allow(clippy::zombie_processes)]
-fn spawn_daemon(socket: &std::path::Path, agent_dir: &std::path::Path) -> Daemon {
+fn spawn_daemon(
+    socket: &std::path::Path,
+    agent_dir: &std::path::Path,
+    executable_path: Option<&std::path::Path>,
+) -> Daemon {
     let binary = env!("CARGO_BIN_EXE_pa-daemon");
-    let child = Command::new(binary)
+    let mut command = Command::new(binary);
+    if let Some(path) = executable_path {
+        command.env("PATH", path);
+    }
+    let child = command
         .arg("supervisor")
         .arg("--socket")
         .arg(socket)
@@ -230,7 +239,7 @@ fn scripted_session(
     agent_dir: &std::path::Path,
 ) -> (Daemon, Client, String, std::path::PathBuf) {
     let socket = dir.join("daemon.sock");
-    let daemon = spawn_daemon(&socket, agent_dir);
+    let daemon = spawn_daemon(&socket, agent_dir, None);
     let (mut client, _hello) = Client::connect(&socket);
     let script_path = dir.join("script.json");
     std::fs::write(
@@ -474,7 +483,7 @@ fn wave_b10_fresh_supervisor_catalog() {
     let agent_dir = dir.path().join("agent");
     std::fs::create_dir_all(&agent_dir).expect("agent dir");
     let socket = dir.path().join("daemon.sock");
-    let _daemon = spawn_daemon(&socket, &agent_dir);
+    let _daemon = spawn_daemon(&socket, &agent_dir, None);
     let (mut client, _hello) = Client::connect(&socket);
 
     client.send_command("s1", &json!({ "type": "cron_list" }));
@@ -527,10 +536,23 @@ fn wave_b11_saved_sessions_wire_shapes() {
     let agent_dir = dir.path().join("agent");
     std::fs::create_dir_all(&agent_dir).expect("agent dir");
 
-    // A fresh supervisor: the unknown-path and auth error paths.
+    // A fresh supervisor: deterministic deletion failure, unknown-path, and auth errors.
     {
+        // An installed trash utility can treat an absent file as successfully
+        // deleted. Force trash to fail and keep a real directory in place so
+        // unlink must fail too, independently of the host's tools and OS.
+        let tools = dir.path().join("failure-tools");
+        std::fs::create_dir(&tools).expect("private tools directory");
+        let trash = tools.join("trash");
+        std::fs::write(&trash, "#!/bin/sh\nexit 1\n").expect("write failing trash");
+        std::fs::set_permissions(&trash, std::fs::Permissions::from_mode(0o755))
+            .expect("executable failing trash");
+        let undeletable = dir.path().join("not-a-session.jsonl");
+        std::fs::create_dir(&undeletable).expect("non-file deletion target");
+        let retained = undeletable.join("retained");
+        std::fs::write(&retained, "still here").expect("target contents");
         let socket = dir.path().join("daemon.sock");
-        let _daemon = spawn_daemon(&socket, &agent_dir);
+        let _daemon = spawn_daemon(&socket, &agent_dir, Some(&tools));
         let (mut client, _hello) = Client::connect(&socket);
 
         client.send_command(
@@ -552,13 +574,23 @@ fn wave_b11_saved_sessions_wire_shapes() {
             "d0",
             &json!({
                 "type": "delete_saved_session",
-                "sessionPath": "/tmp/does-not-exist-xyz.jsonl"
+                "sessionPath": undeletable.to_string_lossy()
             }),
         );
         let response = client.read_response("d0");
         // The delete answers the TS DeleteSessionFileResult failure object (ok:false).
         assert_eq!(response["success"], true, "{response}");
         assert_eq!(response["data"]["ok"], false, "{response}");
+        assert!(
+            response["data"]["error"]
+                .as_str()
+                .is_some_and(|error| !error.is_empty()),
+            "{response}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&retained).expect("failed deletion preserves target"),
+            "still here"
+        );
 
         client.send_command("p0", &json!({ "type": "list_agent_peers" }));
         let response = client.read_response("p0");
@@ -791,7 +823,7 @@ fn wave_b10_catalog_slices_served_without_reforwarding() {
     let agent_dir = dir.path().join("agent");
     std::fs::create_dir_all(&agent_dir).expect("agent dir");
     let socket = dir.path().join("daemon.sock");
-    let _daemon = spawn_daemon(&socket, &agent_dir);
+    let _daemon = spawn_daemon(&socket, &agent_dir, None);
     let (mut client_a, _hello_a) = Client::connect(&socket);
     let (mut client_b, _hello_b) = Client::connect(&socket);
     let session_a = create_scripted_session(&mut client_a, &agent_dir, dir.path(), "a");

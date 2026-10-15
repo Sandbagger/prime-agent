@@ -18,7 +18,7 @@ use std::io::{BufRead, Read, Write};
 use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use nix::fcntl::{fcntl, FcntlArg::F_SETFL, OFlag};
@@ -37,8 +37,17 @@ use crate::{
 
 /// One pty-backed product child: a mock-supervisor socket, a raw pty, and a
 /// pre-spawn termios snapshot.
+#[path = "terminal_shell.rs"]
+mod terminal_shell;
+
+#[derive(Clone, Copy)]
+pub(crate) enum TerminalOwner {
+    Shell,
+    Product,
+}
+
 pub(crate) struct DifferentialHarness {
-    pub(crate) child: Child,
+    pub(crate) child: terminal_shell::TerminalChild,
     pub(crate) master: PtyReader,
     /// A route may shut it down to refuse later connections.
     listener: Option<std::os::unix::net::UnixListener>,
@@ -53,6 +62,10 @@ impl DifferentialHarness {
     /// Spawn a child (this binary re-executed in a child mode) on a fresh
     /// pty against a mock supervisor that answers everything but the stall.
     pub(crate) fn start(spec: &ChildSpec) -> DifferentialHarness {
+        Self::start_owned(spec, TerminalOwner::Shell)
+    }
+
+    pub(crate) fn start_owned(spec: &ChildSpec, owner: TerminalOwner) -> DifferentialHarness {
         let dir = tempfile::TempDir::new().expect("temp dir");
         let socket = dir.path().join("tui.sock");
         let listener = std::os::unix::net::UnixListener::bind(&socket).expect("bind mock socket");
@@ -73,7 +86,7 @@ impl DifferentialHarness {
         )
         .expect("open pty");
         let before = Termios::capture(pty.master.as_raw_fd());
-        let child = spawn_child(spec, &socket, &pty.slave);
+        let child = spawn_owned_child(spec, &socket, &pty.slave, owner);
         // The child needs the socket and the temp dir for its lifetime.
         std::mem::forget(dir);
         DifferentialHarness {
@@ -118,6 +131,10 @@ impl DifferentialHarness {
     pub(crate) fn wait_child_exit(&mut self, timeout: Duration) -> Option<i32> {
         let deadline = Instant::now() + timeout;
         loop {
+            let mut buffer = [0u8; 8192];
+            if let Ok(n) = self.master.file.read(&mut buffer) {
+                self.master.output.extend_from_slice(&buffer[..n]);
+            }
             if let Some(status) = self.child.try_wait().ok().flatten() {
                 return status.code();
             }
@@ -135,26 +152,17 @@ impl DifferentialHarness {
         self.wait_from_start(KITTY_FLAGS_PUSH, "the kitty flags push");
     }
 
-    /// Refuse every later daemon connection (the roster-failure route): the
-    /// shutdown fails the pending accept; once no live descriptor remains,
-    /// later connects get ECONNREFUSED while served ones stay alive.
+    /// Remove only this fixture's socket endpoint. Existing connections keep
+    /// working, while new connects fail on Darwin as well as Linux; shutting
+    /// down one cloned listener is not a portable way to revoke the endpoint.
     pub(crate) fn refuse_later_connections(&mut self) {
         if let Some(listener) = self.listener.take() {
-            // SAFETY: `shutdown` only invalidates the listening socket's
-            // accept queue — the harness owns it and serves nothing on it.
-            unsafe {
-                libc::shutdown(listener.as_raw_fd(), libc::SHUT_RDWR);
-            }
+            std::fs::remove_file(&self.socket_path).expect("remove fixture socket endpoint");
             drop(listener);
-            let socket = self.socket_path.clone();
-            let deadline = Instant::now() + Duration::from_secs(10);
-            while Instant::now() < deadline {
-                if std::os::unix::net::UnixStream::connect(&socket).is_err() {
-                    return;
-                }
-                std::thread::sleep(Duration::from_millis(25));
-            }
-            panic!("the harness could not refuse later connections in time");
+            assert!(
+                std::os::unix::net::UnixStream::connect(&self.socket_path).is_err(),
+                "the fixture endpoint must refuse new connections"
+            );
         }
     }
 
@@ -186,6 +194,11 @@ impl Drop for DifferentialHarness {
     fn drop(&mut self) {
         // A panicking wait must never leak the pty child: it owns the
         // controlling terminal of its own session.
+        // Darwin can block a dying session leader in ttyclose while output
+        // is stopped. Close the emulator peer before reaping during teardown.
+        if let Ok(null) = std::fs::File::open("/dev/null") {
+            drop(std::mem::replace(&mut self.master.file, null));
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
@@ -293,7 +306,7 @@ pub(crate) struct Termios {
     oflag: libc::tcflag_t,
     cflag: libc::tcflag_t,
     lflag: libc::tcflag_t,
-    line: libc::cc_t,
+    line: Option<libc::cc_t>,
     cc: [libc::cc_t; libc::NCCS],
 }
 
@@ -308,7 +321,11 @@ impl Termios {
             oflag: raw.c_oflag,
             cflag: raw.c_cflag,
             lflag: raw.c_lflag,
-            line: raw.c_line,
+            // Linux exposes the discipline selector; BSD termios has no c_line.
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            line: Some(raw.c_line),
+            #[cfg(not(any(target_os = "linux", target_os = "android")))]
+            line: None,
             cc: raw.c_cc,
         }
     }
@@ -524,19 +541,39 @@ impl ChildSpec {
 /// A child of this very binary, re-executed with the pty slave as its
 /// terminal AND controlling terminal (`setsid` + `TIOCSCTTY`): crossterm's
 /// raw-mode and event reads go through `/dev/tty`.
-pub(crate) fn spawn_child(spec: &ChildSpec, socket: &Path, slave: &OwnedFd) -> Child {
+pub(crate) fn spawn_child(
+    spec: &ChildSpec,
+    socket: &Path,
+    slave: &OwnedFd,
+) -> terminal_shell::TerminalChild {
+    spawn_owned_child(spec, socket, slave, TerminalOwner::Shell)
+}
+
+fn spawn_owned_child(
+    spec: &ChildSpec,
+    socket: &Path,
+    slave: &OwnedFd,
+    owner: TerminalOwner,
+) -> terminal_shell::TerminalChild {
     // Runs between fork and exec in the child: become a session leader
     // and claim the pty slave as the controlling terminal.
     pub(crate) fn claim_controlling_tty(fd: i32) -> std::io::Result<()> {
         nix::unistd::setsid()?;
-        let rc = unsafe { libc::ioctl(fd, libc::TIOCSCTTY as libc::c_ulong, 0) };
+        #[cfg(target_vendor = "apple")]
+        let request = libc::c_ulong::from(libc::TIOCSCTTY);
+        #[cfg(not(target_vendor = "apple"))]
+        let request = libc::TIOCSCTTY;
+        let rc = unsafe { libc::ioctl(fd, request, 0) };
         if rc < 0 {
             return Err(std::io::Error::last_os_error());
         }
         Ok(())
     }
     let slave_fd = slave.as_raw_fd();
-    let mut command = Command::new(std::env::current_exe().expect("test binary"));
+    let mut command = match owner {
+        TerminalOwner::Shell => terminal_shell::command(socket),
+        TerminalOwner::Product => Command::new(std::env::current_exe().expect("test binary")),
+    };
     command
         .arg("--exact")
         .arg(child_mode_test_name(spec.mode))
@@ -564,7 +601,11 @@ pub(crate) fn spawn_child(spec: &ChildSpec, socket: &Path, slave: &OwnedFd) -> C
     unsafe {
         command.pre_exec(move || claim_controlling_tty(slave_fd));
     }
-    command.spawn().expect("spawn pty child")
+    let process = command.spawn().expect("spawn pty child");
+    match owner {
+        TerminalOwner::Shell => terminal_shell::TerminalChild::shell(process, socket),
+        TerminalOwner::Product => terminal_shell::TerminalChild::direct(process),
+    }
 }
 
 pub(crate) fn slave_as_stdio(slave: &OwnedFd) -> Stdio {

@@ -21,6 +21,10 @@
 )]
 #![cfg(unix)]
 
+#[path = "support/processes.rs"]
+mod process_probes;
+use process_probes::child_pids_of;
+
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::Path;
@@ -72,31 +76,6 @@ fn wait_socket_ready(socket: &Path) {
         assert!(Instant::now() < deadline, "supervisor socket never came up");
         std::thread::sleep(Duration::from_millis(20));
     }
-}
-
-fn child_pids_of(ppid: u32) -> Vec<u32> {
-    let mut pids = Vec::new();
-    let entries = std::fs::read_dir("/proc").expect("read /proc");
-    for entry in entries.flatten() {
-        let Ok(entry_pid) = entry.file_name().to_string_lossy().parse::<u32>() else {
-            continue;
-        };
-        let Ok(stat) = std::fs::read_to_string(format!("/proc/{entry_pid}/stat")) else {
-            continue;
-        };
-        let Some((_, rest)) = stat.rsplit_once(')') else {
-            continue;
-        };
-        let mut fields = rest.split_whitespace();
-        fields.next();
-        let Ok(parent) = fields.next().unwrap_or_default().parse::<u32>() else {
-            continue;
-        };
-        if parent == ppid {
-            pids.push(entry_pid);
-        }
-    }
-    pids
 }
 
 /// Worker ids with a registration log line at or after `since` (the log line lands

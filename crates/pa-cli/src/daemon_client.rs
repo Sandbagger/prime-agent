@@ -55,6 +55,10 @@ impl DaemonClient {
 
     fn connect_raw(socket_path: &Path) -> std::io::Result<Self> {
         let stream = connect_blocking(socket_path)?;
+        // The poll interval is fixed for this connection. Configure it before
+        // requests begin: Darwin may reject setsockopt after peer close even
+        // while BufReader still holds the daemon_closing frame and clean EOF.
+        stream.set_read_timeout(READ_POLL)?;
         let writer = stream.try_clone_box()?;
         Ok(DaemonClient {
             socket_path: socket_path.to_path_buf(),
@@ -176,10 +180,6 @@ impl DaemonClient {
         operation: Operation<'_>,
     ) -> Result<String> {
         loop {
-            self.reader
-                .get_mut()
-                .set_read_timeout(READ_POLL)
-                .map_err(|error| anyhow!("daemon socket error: {error}"))?;
             let read = self.reader.read_until(b'\n', &mut self.partial_line);
             match read {
                 Ok(0) => {
@@ -394,8 +394,30 @@ mod tests {
         }
 
         fn set_read_timeout(&self, _: Duration) -> std::io::Result<()> {
-            Ok(())
+            // The connection already configured its poll timeout. Model a
+            // Darwin peer that closed while bytes remain in the reader:
+            // setsockopt can now fail even though buffered reads and EOF work.
+            Err(std::io::Error::from_raw_os_error(libc::EINVAL))
         }
+    }
+
+    #[test]
+    fn buffered_closing_reason_survives_closed_socket_timeout_configuration() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let socket = dir.path().join("daemon.sock");
+        let _listener = UnixListener::bind(&socket).unwrap();
+        let mut client = DaemonClient::connect(&socket).unwrap();
+        client.reader = BufReader::new(Box::new(ScriptedReads(
+            [Some(b"{\"type\":\"daemon_hello\",\"protocol\":{\"name\":\"prime-agent.daemon\",\"version\":7}}\n{\"type\":\"daemon_closing\",\"reason\":\"shutdown\"}\n".as_slice())].into(),
+        )));
+        let text = client
+            .request(list_command("daemon_1"))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            text.starts_with("Connection to the Prime Agent daemon closed. Reason: shutdown."),
+            "{text}"
+        );
     }
 
     /// A line split by poll timeouts, one of them inside a multi-byte

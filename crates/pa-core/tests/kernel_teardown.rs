@@ -56,18 +56,7 @@ fn process_alive(pid: i32) -> bool {
     if pid <= 0 {
         return false;
     }
-    std::fs::read_to_string(format!("/proc/{pid}/stat"))
-        .ok()
-        .and_then(|raw| {
-            // pid (comm) state ...
-            let close = raw.rfind(')')?;
-            raw[close + 1..]
-                .trim_start()
-                .chars()
-                .next()
-                .map(|state| state != 'Z' && state != 'X')
-        })
-        .unwrap_or(false)
+    pa_types::platform::is_process_alive(pid as u32).expect("probe kernel process liveness")
 }
 
 /// Poll until the pid leaves the live-process table (teardown kills are synchronous, but the kernel
@@ -85,6 +74,7 @@ async fn await_process_gone(pid: i32) {
 
 /// Every live `python -m rlm.repl` child of this process (the session-path
 /// test finds its kernel this way, without reaching into engine internals).
+#[cfg(target_os = "linux")]
 fn own_kernel_processes() -> Vec<i32> {
     let me = std::process::id();
     let mut found = Vec::new();
@@ -116,6 +106,39 @@ fn own_kernel_processes() -> Vec<i32> {
         }
     }
     found
+}
+
+// ps is an observation fallback on hosts without procfs. Restrict matches to
+// this test process's own children; a global command-text match is insufficient.
+#[cfg(not(target_os = "linux"))]
+fn own_kernel_processes() -> Vec<i32> {
+    let output = std::process::Command::new("/bin/ps")
+        .args(["-axww", "-o", "pid=,ppid=,args="])
+        .output()
+        .expect("enumerate owned kernel processes");
+    assert!(output.status.success(), "ps kernel enumeration failed");
+    String::from_utf8(output.stdout)
+        .expect("ps kernel output encoding")
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            let pid = fields
+                .next()
+                .expect("ps PID")
+                .parse::<i32>()
+                .expect("numeric PID");
+            let parent = fields
+                .next()
+                .expect("ps PPID")
+                .parse::<u32>()
+                .expect("numeric PPID");
+            let args: Vec<_> = fields.collect();
+            (parent == std::process::id()
+                && process_alive(pid)
+                && args.windows(2).any(|pair| pair == ["-m", "rlm.repl"]))
+            .then_some(pid)
+        })
+        .collect()
 }
 
 /// Start a manager and run the RLM bootstrap, mirroring the TS provisioner

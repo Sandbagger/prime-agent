@@ -53,9 +53,14 @@ impl TransportListener for tokio::net::UnixListener {
     }
 }
 
-/// `AF_UNIX` `sun_path` capacity: 108 bytes including the terminating NUL.
+/// Platform `AF_UNIX` pathname capacity, reserving one byte for the terminating NUL.
 #[cfg(unix)]
-const MAX_SUN_PATH: usize = 107;
+const MAX_SUN_PATH: usize = {
+    // SAFETY: sockaddr_un contains only integer fields; all-zero is valid. Its
+    // platform-specific sun_path array determines the address limit.
+    let address: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+    address.sun_path.len() - 1
+};
 
 /// A kernel-valid `AF_UNIX` address for `bind`/`connect`. Paths within the limit pass through; a
 /// longer path is re-anchored through an `O_PATH` descriptor on its parent
@@ -178,7 +183,7 @@ pub fn unix_listener_definitely_closed(path: &Path) -> bool {
     #[cfg(not(target_os = "linux"))]
     {
         let _ = path;
-        return false;
+        false
     }
     #[cfg(target_os = "linux")]
     {
@@ -364,6 +369,7 @@ pub fn connect_blocking(path: &Path) -> std::io::Result<Box<dyn BlockingTranspor
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    #[cfg(target_os = "linux")]
     use std::os::unix::fs::FileTypeExt;
 
     /// A directory whose full path length is exactly `target` bytes; falls
@@ -392,56 +398,111 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn over_limit_paths_bind_connect_and_land_in_place() {
-        use tokio::io::AsyncReadExt;
-        let dir = dir_of_exact_len("roundtrip", 120);
-        let socket = dir.join("worker-test.sock");
-        let _ = std::fs::remove_file(&socket);
-        assert!(socket.as_os_str().len() > MAX_SUN_PATH);
+    async fn over_limit_paths_follow_the_platform_address_contract() {
+        #[cfg(target_os = "linux")]
+        {
+            use tokio::io::AsyncReadExt;
+            let dir = dir_of_exact_len("roundtrip", 120);
+            let socket = dir.join("worker-test.sock");
+            let _ = std::fs::remove_file(&socket);
+            assert!(socket.as_os_str().len() > MAX_SUN_PATH);
 
-        bind_transport(&socket)
-            .await
-            .expect("bind through the limit");
-        assert!(std::fs::symlink_metadata(&socket)
-            .expect("socket file at the original deep path")
-            .file_type()
-            .is_socket());
-        // A second bind on the live socket must fail (address in use), not
-        // silently re-anchor somewhere else.
-        assert!(bind_transport(&socket).await.is_err());
-        std::fs::remove_file(&socket).expect("cleanup for rebind");
-
-        let listener =
-            tokio::net::UnixListener::bind(UnixSocketAddress::new(&socket).unwrap().effective())
-                .expect("rebind address");
-        let connect_path = socket.clone();
-        let connect = tokio::spawn(async move {
-            connect_transport(&connect_path)
+            bind_transport(&socket)
                 .await
-                .expect("connect through the limit")
-        });
-        let (server, _) = listener.accept().await.expect("accept");
-        let client = connect.await.expect("client task");
-        // Round-trip one write to prove the pair is the same socket.
-        let (mut reader, _writer) = client.split();
-        server.writable().await.expect("server writable");
-        server.try_write(b"ping").expect("server write");
-        let mut buf = [0u8; 4];
-        reader.read_exact(&mut buf).await.expect("client read");
-        assert_eq!(&buf, b"ping");
-        let _ = std::fs::remove_file(&socket);
+                .expect("bind through the limit");
+            assert!(std::fs::symlink_metadata(&socket)
+                .expect("socket file at the original deep path")
+                .file_type()
+                .is_socket());
+            // A second bind on the live socket must fail (address in use), not
+            // silently re-anchor somewhere else.
+            assert!(bind_transport(&socket).await.is_err());
+            std::fs::remove_file(&socket).expect("cleanup for rebind");
+
+            let listener = tokio::net::UnixListener::bind(
+                UnixSocketAddress::new(&socket).unwrap().effective(),
+            )
+            .expect("rebind address");
+            let connect_path = socket.clone();
+            let connect = tokio::spawn(async move {
+                connect_transport(&connect_path)
+                    .await
+                    .expect("connect through the limit")
+            });
+            let (server, _) = listener.accept().await.expect("accept");
+            let client = connect.await.expect("client task");
+            // Round-trip one write to prove the pair is the same socket.
+            let (mut reader, _writer) = client.split();
+            server.writable().await.expect("server writable");
+            server.try_write(b"ping").expect("server write");
+            let mut buf = [0u8; 4];
+            reader.read_exact(&mut buf).await.expect("client read");
+            assert_eq!(&buf, b"ping");
+            let _ = std::fs::remove_file(&socket);
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let dir = dir_of_exact_len("roundtrip", 120);
+            let socket = dir.join("worker-test.sock");
+            let error = bind_transport(&socket)
+                .await
+                .err()
+                .expect("over-limit paths are rejected without reanchoring");
+            assert!(
+                error
+                    .to_string()
+                    .contains(&format!("{MAX_SUN_PATH}-byte limit")),
+                "{error}"
+            );
+            assert!(
+                error.to_string().contains(&socket.display().to_string()),
+                "{error}"
+            );
+            assert!(
+                !socket.exists(),
+                "a rejected path never creates a socket elsewhere"
+            );
+            let error = connect_transport(&socket)
+                .await
+                .err()
+                .expect("connect enforces the same address boundary");
+            assert!(
+                error
+                    .to_string()
+                    .contains(&format!("{MAX_SUN_PATH}-byte limit")),
+                "{error}"
+            );
+            std::fs::remove_dir_all(&dir).expect("cleanup over-limit fixture");
+        }
     }
 
     #[tokio::test]
     async fn paths_at_the_limit_bind_directly() {
-        let dir = dir_of_exact_len("boundary", 96);
-        let name = "x".repeat(MAX_SUN_PATH - dir.as_os_str().len() - 1);
-        let socket = dir.join(name);
-        assert_eq!(socket.as_os_str().len(), MAX_SUN_PATH);
-        bind_transport(&socket)
-            .await
-            .expect("bind at exactly the limit");
-        let _ = std::fs::remove_file(&socket);
+        let dir = dir_of_exact_len("boundary", MAX_SUN_PATH - 11);
+        for length in [MAX_SUN_PATH - 1, MAX_SUN_PATH] {
+            let name = "x".repeat(length - dir.as_os_str().len() - 1);
+            let socket = dir.join(name);
+            assert_eq!(socket.as_os_str().len(), length);
+            let address = UnixSocketAddress::new(&socket).expect("direct address");
+            assert_eq!(address.effective(), socket);
+            let _listener = bind_transport(&socket)
+                .await
+                .expect("bind at platform boundary");
+            let _client = connect_transport(&socket)
+                .await
+                .expect("connect at platform boundary");
+            std::fs::remove_file(&socket).expect("cleanup socket");
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let socket = dir.join("x".repeat(MAX_SUN_PATH - dir.as_os_str().len()));
+            assert_eq!(socket.as_os_str().len(), MAX_SUN_PATH + 1);
+            assert!(
+                UnixSocketAddress::new(&socket).is_err(),
+                "one byte past the platform boundary is rejected"
+            );
+        }
+        std::fs::remove_dir_all(&dir).expect("cleanup boundary fixture");
     }
 
     #[tokio::test]

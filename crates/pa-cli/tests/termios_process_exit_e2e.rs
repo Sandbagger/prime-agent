@@ -121,7 +121,8 @@ fn diff_view_child_mode() {
 
 // The audit assertions.
 
-/// Resolve the pty slave's device path from the master fd.
+/// Resolve the pty slave path for the Linux `/proc` descriptor audit.
+#[cfg(target_os = "linux")]
 fn pty_slave_path(master: &std::fs::File) -> PathBuf {
     let mut buffer = [0u8; 64];
     // SAFETY: `ptsname_r` writes the NUL-terminated slave path into
@@ -138,6 +139,7 @@ fn pty_slave_path(master: &std::fs::File) -> PathBuf {
 
 /// The fd-set audit: after the TUI exits, NO process may still hold the
 /// pty (a leaked grandchild keeps the pane busy).
+#[cfg(target_os = "linux")]
 fn assert_no_process_holds_the_pty(master: &std::fs::File, context: &str) {
     let slave = pty_slave_path(master);
     let self_pid = std::process::id();
@@ -187,6 +189,9 @@ fn assert_the_shell_flows(master: &mut PtyReader, context: &str) {
 /// Run one route's whole terminal-handback contract.
 fn assert_the_handback_is_whole(harness: &mut DifferentialHarness, context: &str) {
     harness.assert_terminal_state_restored(context);
+    // The process-wide descriptor audit uses Linux `/proc`; terminal state
+    // and flow-control assertions still run on every Unix host.
+    #[cfg(target_os = "linux")]
     assert_no_process_holds_the_pty(&harness.master.file, context);
     assert_the_shell_flows(&mut harness.master, context);
 }
@@ -234,6 +239,21 @@ fn a_launch_on_a_ctrl_s_stopped_tty_flows_and_exits_whole() {
     let _lock = harness::harness_lock();
     let mut harness =
         DifferentialHarness::start(&ChildSpec::new("chat").env(CHILD_PREMOUNT_GATE_ENV, "1"));
+    // Darwin defaults IXANY on: the sentinel itself would resume XOFF.
+    // This route explicitly models a tty that resumes only on XON, and
+    // records that starting state before the product mounts.
+    let fd = harness.master.file.as_raw_fd();
+    let mut attributes = std::mem::MaybeUninit::<libc::termios>::uninit();
+    // SAFETY: tcgetattr initializes the owned PTY's termios on success.
+    assert_eq!(unsafe { libc::tcgetattr(fd, attributes.as_mut_ptr()) }, 0);
+    let mut attributes = unsafe { attributes.assume_init() };
+    attributes.c_iflag &= !libc::IXANY;
+    // SAFETY: attributes is an initialized snapshot of this owned PTY.
+    assert_eq!(
+        unsafe { libc::tcsetattr(fd, libc::TCSANOW, &raw const attributes) },
+        0
+    );
+    harness.before = Termios::capture(fd);
     assert!(
         harness.before.input_flow_control_on(),
         "the pre-launch pty must run software flow control for the stop to arm"
@@ -415,6 +435,11 @@ impl SuspendCycleHarness {
 impl Drop for SuspendCycleHarness {
     fn drop(&mut self) {
         // A panicking wait must never leak the pty child.
+        // Darwin can block a dying session leader in ttyclose while output
+        // is stopped. Close the emulator peer before reaping during teardown.
+        if let Ok(null) = std::fs::File::open("/dev/null") {
+            drop(std::mem::replace(&mut self.master.file, null));
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
@@ -556,6 +581,7 @@ fn a_suspend_cycle_with_a_ctrl_s_in_the_stopped_window_never_stops_the_shell() {
         after.describe()
     );
     let context = "the suspend-cycle exit";
+    #[cfg(target_os = "linux")]
     assert_no_process_holds_the_pty(&harness.master.file, context);
     assert_the_shell_flows(&mut harness.master, context);
 }

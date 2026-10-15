@@ -617,7 +617,8 @@ fn the_suspend_cycle_hands_a_whole_terminal_to_the_shell_and_back() {
         Err(error) => panic!("the harness could not start a fresh session: {error}"),
     }
     let _lock = harness_lock();
-    let mut harness = DifferentialHarness::start(&ChildSpec::new("chat"));
+    let mut harness =
+        DifferentialHarness::start_owned(&ChildSpec::new("chat"), harness::TerminalOwner::Product);
     harness.answer_kitty_query();
     harness.wait_from_start(b"row 0", "the attach snapshot rendered");
     let child_id = harness.child.id();

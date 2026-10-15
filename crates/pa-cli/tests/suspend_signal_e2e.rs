@@ -17,6 +17,7 @@
 
 #![cfg(unix)]
 
+use std::fmt::Write as _;
 use std::io::{BufRead, Read, Write};
 use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::unix::process::CommandExt;
@@ -452,7 +453,10 @@ fn caret_row_at_column(stream: &[u8], column: u16) -> Option<String> {
             .rposition(|byte| !byte.is_ascii_digit())
             .map_or(0, |last_non_digit| last_non_digit + 1);
         let digits = &head[digits_start..];
-        let esc = head[..digits_start].ends_with(b"\x1b[");
+        // Paint operations also position at column 5 (notably the splash
+        // at row 4). Only the renderer's final hidden-caret park identifies
+        // the editor row; a partial first frame must not match its artwork.
+        let esc = head[..digits_start].ends_with(b"\x1b[?25l\x1b[");
         if esc && !digits.is_empty() {
             row = Some(String::from_utf8_lossy(digits).into_owned());
         }
@@ -684,4 +688,52 @@ fn attach_data(id: &str) -> Value {
             "lastEventCursor": null,
         },
     })
+}
+
+#[test]
+fn caret_row_ignores_splash_paint_positions_before_the_editor_park() {
+    assert_eq!(caret_row_at_column(b"\x1b[4;5Hlogo", 5), None);
+    assert_eq!(
+        caret_row_at_column(b"\x1b[4;5Hlogo\x1b[?25l\x1b[20;5H", 5),
+        Some("20".to_string())
+    );
+    assert_eq!(
+        caret_row_at_column(b"\x1b[?25l\x1b[20;5H\x1b[4;5Hlogo", 5),
+        Some("20".to_string())
+    );
+}
+
+#[test]
+fn caret_row_tracks_only_complete_parks_across_generated_paint_and_read_boundaries() {
+    for column in [1, 5, 10, 80, 255] {
+        for paint_row in [1, 4, 9, 20, 99, 255] {
+            for parked_row in [1, 20, 100] {
+                let mut stream = format!("\x1b[{paint_row};{column}Hsplash");
+                write!(stream, "\x1b[?25l\x1b[{parked_row};{column}H").unwrap();
+                let first_complete = stream.len();
+                write!(stream, "\x1b[{paint_row};{column}Hpaint").unwrap();
+                // A real caret at another column must not replace our match.
+                write!(stream, "\x1b[?25l\x1b[7;{}H", column + 1).unwrap();
+                write!(stream, "\x1b[?25l\x1b[{};{column}H", parked_row + 1).unwrap();
+                let second_complete = stream.len();
+                write!(stream, "\x1b[{paint_row};{column}Htrailing paint").unwrap();
+                // The reader accumulates bytes before parsing: every prefix
+                // covers a possible PTY read boundary, including split CSI.
+                for end in 0..=stream.len() {
+                    let expected = if end >= second_complete {
+                        Some((parked_row + 1).to_string())
+                    } else if end >= first_complete {
+                        Some(parked_row.to_string())
+                    } else {
+                        None
+                    };
+                    assert_eq!(
+                        caret_row_at_column(&stream.as_bytes()[..end], column),
+                        expected,
+                        "column={column}, paint_row={paint_row}, parked_row={parked_row}, end={end}"
+                    );
+                }
+            }
+        }
+    }
 }

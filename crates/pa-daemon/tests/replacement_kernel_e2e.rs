@@ -8,6 +8,10 @@
 //! interfere; tests skip (with a note) on machines without a live kernel install.
 #![cfg(unix)]
 
+#[path = "support/processes.rs"]
+mod process_probes;
+use process_probes::kernel_pids;
+
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
@@ -51,27 +55,6 @@ fn kernel_python() -> Option<PathBuf> {
         candidate.display()
     );
     None
-}
-
-/// Every live `python -m rlm.repl` pid on the box (ambient kernels from
-/// other sessions are part of the baseline the diffs below remove).
-fn kernel_pids() -> Vec<u32> {
-    let mut found = Vec::new();
-    let entries = std::fs::read_dir("/proc").unwrap_or_else(|e| panic!("read /proc: {e}"));
-    for entry in entries.flatten() {
-        let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() else {
-            continue;
-        };
-        let Ok(cmdline) = std::fs::read_to_string(format!("/proc/{pid}/cmdline")) else {
-            continue;
-        };
-        let args: Vec<&str> = cmdline.split('\0').collect();
-        if args.windows(2).any(|window| window == ["-m", "rlm.repl"]) {
-            found.push(pid);
-        }
-    }
-    found.sort_unstable();
-    found
 }
 
 /// Poll until at least one kernel pid exists outside `baseline`.

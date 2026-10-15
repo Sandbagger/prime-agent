@@ -528,6 +528,11 @@ impl VerdictHarness {
     }
 
     fn finish(mut self) {
+        // Darwin can block a dying session leader in ttyclose while output
+        // is stopped. Close the emulator peer before reaping during teardown.
+        if let Ok(null) = std::fs::File::open("/dev/null") {
+            drop(std::mem::replace(&mut self.master.file, null));
+        }
         let _ = self.child.kill();
         // Reap the child so no zombie is left behind.
         let _ = self.child.wait();
@@ -537,6 +542,11 @@ impl VerdictHarness {
 impl Drop for VerdictHarness {
     fn drop(&mut self) {
         // A panicking wait must never leak the pty child.
+        // Darwin can block a dying session leader in ttyclose while output
+        // is stopped. Close the emulator peer before reaping during teardown.
+        if let Ok(null) = std::fs::File::open("/dev/null") {
+            drop(std::mem::replace(&mut self.master.file, null));
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
@@ -627,7 +637,11 @@ fn spawn_child(socket: &Path, slave: &OwnedFd) -> Child {
     // Runs between fork and exec: become a session leader and claim the pty slave as the tty.
     fn claim_controlling_tty(fd: i32) -> std::io::Result<()> {
         nix::unistd::setsid()?;
-        let rc = unsafe { libc::ioctl(fd, libc::TIOCSCTTY as libc::c_ulong, 0) };
+        #[cfg(target_vendor = "apple")]
+        let request = libc::c_ulong::from(libc::TIOCSCTTY);
+        #[cfg(not(target_vendor = "apple"))]
+        let request = libc::TIOCSCTTY;
+        let rc = unsafe { libc::ioctl(fd, request, 0) };
         if rc < 0 {
             return Err(std::io::Error::last_os_error());
         }

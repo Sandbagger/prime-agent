@@ -1,48 +1,10 @@
 //! The supervisor process-exit paths - the shutdown command and the SIGTERM
-//! graceful drain - with the /proc process-tree helpers they lean on.
+//! graceful drain - with platform process-tree probes.
 
 use super::*;
-
-fn child_pids_of(ppid: u32) -> Vec<u32> {
-    let mut pids = Vec::new();
-    let entries = std::fs::read_dir("/proc").expect("read /proc");
-    for entry in entries.flatten() {
-        let Ok(entry_pid) = entry.file_name().to_string_lossy().parse::<u32>() else {
-            continue;
-        };
-        let Ok(stat) = std::fs::read_to_string(format!("/proc/{entry_pid}/stat")) else {
-            continue;
-        };
-        // `comm` can contain spaces and parens, so parse after the last ')'.
-        let Some((_, rest)) = stat.rsplit_once(')') else {
-            continue;
-        };
-        let mut fields = rest.split_whitespace();
-        fields.next(); // process state
-        let Ok(parent) = fields.next().unwrap_or_default().parse::<u32>() else {
-            continue;
-        };
-        if parent == ppid {
-            pids.push(entry_pid);
-        }
-    }
-    pids
-}
-
-/// Liveness that ignores zombies: a detached child nobody reaps keeps its
-/// `/proc` entry (exit status pending), so path existence alone would call
-/// an exited process alive.
-fn process_alive(pid: u32) -> bool {
-    let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
-        return false;
-    };
-    // `comm` can contain spaces and parens, so parse after the last ')'.
-    let Some((_, rest)) = stat.rsplit_once(')') else {
-        return false;
-    };
-    let state = rest.split_whitespace().next().unwrap_or_default();
-    !state.starts_with('Z') && !state.starts_with('X')
-}
+#[path = "../support/processes.rs"]
+mod process_probes;
+use process_probes::{child_pids_of, process_alive};
 
 fn wait_child_exit(child: &mut Child, timeout: Duration) -> Option<std::process::ExitStatus> {
     let deadline = Instant::now() + timeout;
@@ -107,7 +69,7 @@ fn shutdown_command_exits_the_supervisor_process() {
     let exit = wait_child_exit(&mut daemon.child, Duration::from_secs(10))
         .expect("the supervisor process exited after shutdown");
     assert!(exit.success(), "supervisor exit: {exit:?}");
-    assert!(!socket.exists(), "the socket file is removed on exit");
+    assert_socket_reusable(&socket);
 
     let deadline = Instant::now() + Duration::from_secs(10);
     for pid in worker_pids {
@@ -153,8 +115,27 @@ fn a_sigterm_exits_the_supervisor_through_the_graceful_drain() {
         status.success(),
         "the drain must end in a clean exit 0, not a signal death: {status}"
     );
-    assert!(
-        !socket.exists(),
-        "the drained supervisor cleans its socket file up"
-    );
+    assert_socket_reusable(&socket);
+}
+
+// Exit cleanup is conservative on BSD: verify the production rebinding path
+// rather than requiring Linux's stronger stale-listener deletion proof.
+fn assert_socket_reusable(socket: &std::path::Path) {
+    #[cfg(target_os = "linux")]
+    assert!(!socket.exists(), "the socket file is removed on exit");
+    #[cfg(not(target_os = "linux"))]
+    {
+        assert!(std::os::unix::net::UnixStream::connect(socket).is_err());
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("socket reuse runtime")
+            .block_on(pa_daemon::socket::prepare_socket_path(socket))
+            .expect("prepare the stopped supervisor socket for reuse");
+        let listener =
+            std::os::unix::net::UnixListener::bind(socket).expect("rebind supervisor path");
+        drop(std::os::unix::net::UnixStream::connect(socket).expect("connect rebound listener"));
+        drop(listener);
+        std::fs::remove_file(socket).expect("remove fixture replacement socket");
+    }
 }

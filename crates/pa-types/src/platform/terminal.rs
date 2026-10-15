@@ -89,17 +89,18 @@ fn tty() -> Option<File> {
     }
 }
 
-/// Lift a pending Ctrl+S output stop on the process tty: a stop armed from a VSTOP received while
-/// cooked is RUNTIME state - it survives every `tcsetattr`, and the kernel lifts it only on the
-/// IXON
-/// transition to off (`tcflow(TCOON)` clears only the separate `TCOFF` state). The two-step toggle
-/// clears IXON once (lifting the stop), then writes the captured attributes back.
+/// Best-effort lift of a pending Ctrl+S output stop without changing termios.
+/// Linux lifts its VSTOP state on the IXON transition to off; Darwin also
+/// requires TCOON. Apply both mechanisms, then restore the exact attributes.
 #[cfg(unix)]
 pub fn restart_output() {
     let Some(tty) = tty() else {
         return;
     };
     let fd = tty.as_raw_fd();
+    // SAFETY: TCOON resumes output on this process's tty and changes no
+    // termios attributes. Like the restore below, this API is best-effort.
+    let _ = unsafe { libc::tcflow(fd, libc::TCOON) };
     let mut attrs: libc::termios = unsafe { std::mem::zeroed() };
     // SAFETY: `tcgetattr` only reads the line discipline into `attrs`.
     if unsafe { libc::tcgetattr(fd, &raw mut attrs) } != 0 {
@@ -107,7 +108,7 @@ pub fn restart_output() {
     }
     let restored = attrs;
     attrs.c_iflag &= !libc::IXON;
-    // SAFETY: the two `tcsetattr` writes run the kernel's one stop-lift
+    // SAFETY: the two `tcsetattr` writes run Linux's stop-lift
     // (the IXON transition) and then restore the exact captured state.
     unsafe {
         if libc::tcsetattr(fd, libc::TCSANOW, &raw const attrs) == 0 {

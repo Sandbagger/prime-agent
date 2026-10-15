@@ -132,6 +132,8 @@ struct ChildRecord {
     session_name: String,
     active_session_id: String,
     session_id: Option<String>,
+    /// Live IDs learned from durable family rows after worker replacement.
+    active_session_aliases: std::collections::HashSet<String>,
     session_dir: String,
     model: String,
     label: String,
@@ -155,6 +157,8 @@ struct ChildRecord {
     prompt_admitted: bool,
     /// Explicit bounded collect may release this child before the parent turn ends.
     collect_kickoff: Arc<tokio::sync::Notify>,
+    /// Admission result of the detached spawn prompt, shared with parent senders.
+    prompt_admission: tokio::sync::watch::Sender<Option<Result<(), String>>>,
     /// Terminal error text: the cancel reason for a cancelled run, the
     /// failure text for a failed one.
     error: Option<String>,
@@ -231,6 +235,7 @@ impl ChildRecord {
     fn matches_id(&self, target: &str) -> bool {
         self.rlm_child_id == target
             || self.active_session_id == target
+            || self.active_session_aliases.contains(target)
             || self.session_id.as_deref() == Some(target)
     }
 }
@@ -578,6 +583,17 @@ impl SupervisorChildSessions {
         snapshots
     }
 
+    /// Remember the current live selector observed through a durable child row.
+    pub(crate) async fn note_child_active_alias(&self, child_id: &str, active_id: &str) {
+        let Some(record) = self.inner.find_record(child_id).await else {
+            return;
+        };
+        let mut record = record.lock().await;
+        if active_id != record.active_session_id {
+            record.active_session_aliases.insert(active_id.to_string());
+        }
+    }
+
     /// Registry snapshot for the `agent_message` family view: no
     /// per-child worker refresh, so addressing never blocks.
     pub async fn child_identities(&self) -> Vec<RlmChildIdentity> {
@@ -595,16 +611,43 @@ impl SupervisorChildSessions {
         identities
     }
 
-    /// Re-arm usage observation for a child after an agent message was
-    /// delivered to it; no-op for non-children or already-observed targets.
+    /// Admit an own-child follow-up after its initial task, then re-arm usage
+    /// before transport; no-op for non-children or already-observed targets.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if initial admission fails, the child closes before
+    /// admission, or native policy refuses a terminal child's follow-up.
     pub async fn observe_child_usage(&self, target: &str) -> Result<()> {
         let Some(record) = self.inner.find_record(target).await else {
             return Ok(());
         };
+        // Own-child follow-ups wait for the deferred initial task admission.
+        let (admission_sender, kickoff) = {
+            let record = record.lock().await;
+            (
+                record.prompt_admission.clone(),
+                Arc::clone(&record.collect_kickoff),
+            )
+        };
+        kickoff.notify_one();
+        let mut admission = admission_sender.subscribe();
+        loop {
+            if let Some(result) = admission.borrow().clone() {
+                result.map_err(anyhow::Error::msg)?;
+                break;
+            }
+            admission
+                .changed()
+                .await
+                .map_err(|_| anyhow!("RLM child closed before its task prompt was admitted"))?;
+        }
         if pa_ai::native_policy::enabled() {
             let child = record.lock().await;
             if child.settled_status.is_some() || child.settled || child.closed_by_parent {
-                bail!("Cannot message a terminal child under substrate policy; spawn a new child with a fresh route grant");
+                bail!(
+                    "Cannot message a terminal child under substrate policy; spawn a new child with a fresh route grant"
+                );
             }
         }
         SupervisorChildSessionsInner::arm_usage_watch(&self.inner, &record).await;
@@ -653,6 +696,7 @@ impl SupervisorChildSessions {
                 session_name: identity.session_name,
                 active_session_id: identity.active_session_id,
                 session_id: identity.session_id,
+                active_session_aliases: std::collections::HashSet::new(),
                 session_dir: String::new(),
                 model: String::new(),
                 label: String::new(),
@@ -665,6 +709,7 @@ impl SupervisorChildSessions {
                 notice_delivered: false,
                 prompt_admitted: true,
                 collect_kickoff: Arc::new(tokio::sync::Notify::new()),
+                prompt_admission: tokio::sync::watch::Sender::new(Some(Ok(()))),
                 error: None,
                 closed_by_parent: false,
                 session_file: None,
@@ -953,6 +998,9 @@ mod usage;
 
 #[cfg(test)]
 mod watch_tests;
+
+#[cfg(test)]
+mod prompt_admission_tests;
 
 #[cfg(test)]
 mod usage_emit_tests;

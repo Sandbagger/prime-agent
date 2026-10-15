@@ -82,7 +82,7 @@ fn run_app_surface(
     pa_types::platform::console_init();
     // The raw-mode bracket's `cfmakeraw` write clears IXON, the kernel's one trigger for
     // lifting a pending Ctrl+S stop (see the flow e2e's launch route).
-    terminal::enable_raw_mode()?;
+    crate::terminal_mode::enable_raw_mode()?;
     // The alternate screen mounts through the ownership module (the same `pendingAltScreenHandoff`
     // semantics the session surface uses), so the alt-screen state is tracked for every exit path.
     crate::altscreen::enter()?;

@@ -139,11 +139,11 @@ pub(crate) fn run(options: &RunOptions) -> Result<i32> {
         }
     }
     if !status.is_null() {
-        let status: pa_core::autonomous::AgentAutonomousStatus = serde_json::from_value(status)?;
         use pa_core::autonomous::{
             autonomous_limit_reason_of_status, describe_autonomous_limit,
             latest_autonomous_gate_attempt, now_millis,
         };
+        let status: pa_core::autonomous::AgentAutonomousStatus = serde_json::from_value(status)?;
         let now = now_millis();
         let limit = autonomous_limit_reason_of_status(&status, now);
         if let Some(failure) = status

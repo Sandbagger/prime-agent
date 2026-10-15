@@ -18,6 +18,9 @@ static CHILDREN: OnceLock<std::sync::Mutex<std::collections::HashMap<String, Str
     OnceLock::new();
 
 /// Retain the policy grant until the native child reaches its terminal funnel.
+///
+/// # Panics
+/// Panics if the child-grant mutex is poisoned.
 pub fn remember_child(child: &str, grant: &str) {
     CHILDREN
         .get_or_init(Default::default)
@@ -27,6 +30,12 @@ pub fn remember_child(child: &str, grant: &str) {
 }
 
 /// Release a grant only after the native worker reports terminal settlement.
+///
+/// # Errors
+/// Returns an error if the child-grant mutex is poisoned or policy settlement fails.
+///
+/// # Panics
+/// Panics if the child-grant registry is unavailable after initialization.
 pub async fn settle_child(child: &str, quiescence_proven: bool) -> Result<(), String> {
     let grant = CHILDREN
         .get_or_init(Default::default)
@@ -72,8 +81,7 @@ fn client() -> Option<&'static Client> {
                     grant: std::env::var("DOTFILES_PRIME_NATIVE_GRANT").ok(),
                     depth: std::env::var("DOTFILES_PRIME_NATIVE_DEPTH")
                         .ok()
-                        .map(|value| value.parse().ok())
-                        .unwrap_or(Some(0)),
+                        .map_or(Some(0), |value| value.parse().ok()),
                     broken: AtomicBool::new(false),
                     bound: tokio::sync::Mutex::new(false),
                 })
@@ -82,6 +90,9 @@ fn client() -> Option<&'static Client> {
 }
 
 /// Bind process identity from the host, before model-controlled execution starts.
+///
+/// # Errors
+/// Returns an error if the process identity changes or initialization races.
 pub fn initialize(session_id: &str) -> Result<(), String> {
     if client().is_none() {
         return Ok(());
@@ -99,6 +110,7 @@ pub fn initialize(session_id: &str) -> Result<(), String> {
 }
 
 /// Whether this process was launched with the native policy bridge enabled.
+#[must_use]
 pub fn enabled() -> bool {
     client().is_some()
 }
@@ -116,6 +128,9 @@ pub fn scrub_tool_command(command: &mut std::process::Command) {
 }
 
 /// Start another operator prompt without treating retries or continuations as new budgets.
+///
+/// # Errors
+/// Returns an error if the policy service cannot authorize the new prompt.
 pub async fn rearm_operator_prompt() -> Result<(), String> {
     if let Some(client) = client() {
         if *client.bound.lock().await {
@@ -126,6 +141,9 @@ pub async fn rearm_operator_prompt() -> Result<(), String> {
 }
 
 /// Record an explicit operator abort before another root prompt can re-arm it.
+///
+/// # Errors
+/// Returns an error if the policy cancellation request fails.
 pub async fn cancel_operator_prompt() -> Result<(), String> {
     if let Some(client) = client() {
         if client.grant.is_none() && *client.bound.lock().await {
@@ -136,6 +154,9 @@ pub async fn cancel_operator_prompt() -> Result<(), String> {
 }
 
 /// Attach the durable history identity supplied by session assembly.
+///
+/// # Errors
+/// Returns an error if an identity changes or concurrent initialization fails.
 pub fn durable_session(session_id: &str) -> Result<(), String> {
     if !enabled() {
         return Ok(());
@@ -157,6 +178,9 @@ pub fn durable_session(session_id: &str) -> Result<(), String> {
 
 /// Standalone engines own their history; daemon engines use an ephemeral manager
 /// beneath the worker's already-bound durable history and must not replace it.
+///
+/// # Errors
+/// Returns an error if identity initialization fails or durable history is unbound.
 pub fn runtime_session(session_id: &str) -> Result<(), String> {
     if !enabled() {
         return Ok(());
@@ -192,6 +216,10 @@ fn malformed_policy(reason: &str) -> String {
 }
 
 /// Execute a policy operation using immutable process/session identity. No retries.
+///
+/// # Errors
+/// Returns an error for unbound identity, a poisoned connection, transport or
+/// protocol failure, timeout, or policy rejection.
 pub async fn request(op: &str, mut body: Value) -> Result<Value, String> {
     let Some(client) = client() else {
         return Ok(json!({"ok":true}));
@@ -246,6 +274,9 @@ pub async fn request(op: &str, mut body: Value) -> Result<Value, String> {
 }
 
 /// Telemetry uses the authenticated transport without poisoning policy on sink failure.
+///
+/// # Errors
+/// Returns an error for a non-telemetry operation or a failed policy request.
 pub async fn request_telemetry(op: &str, body: Value) -> Result<Value, String> {
     if !op.starts_with("telemetry_") {
         return Err("invalid telemetry operation".into());
@@ -332,11 +363,11 @@ where
                             drain_deadline.as_mut().reset(tokio::time::Instant::now() + std::time::Duration::from_secs(5));
                         }
                     }
-                    _ = cancellation.cancelled(), if policy_error.is_none() => {
+                    () = cancellation.cancelled(), if policy_error.is_none() => {
                         policy_error = Some("provider cancellation did not settle".into());
                         drain_deadline.as_mut().reset(tokio::time::Instant::now() + std::time::Duration::from_secs(5));
                     }
-                    _ = &mut drain_deadline, if policy_error.is_some() => {
+                    () = &mut drain_deadline, if policy_error.is_some() => {
                         if let Some(client) = client() { client.broken.store(true, Ordering::SeqCst); }
                         return Err(policy_error.take().unwrap_or_else(|| "provider cancellation did not settle".into()));
                     }
@@ -364,6 +395,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{BufRead, Write};
 
     #[test]
     fn tool_subprocess_cannot_inherit_policy_capabilities() {
@@ -434,7 +466,6 @@ mod tests {
             });
             return;
         }
-        use std::io::{BufRead, Write};
         let socket =
             std::env::temp_dir().join(format!("pa-child-settle-{}.sock", std::process::id()));
         let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
@@ -489,7 +520,6 @@ mod tests {
             });
             return;
         }
-        use std::io::{BufRead, Write};
         let socket =
             std::env::temp_dir().join(format!("pa-policy-test-{}.sock", std::process::id()));
         let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
@@ -574,7 +604,6 @@ mod tests {
             });
             return;
         }
-        use std::io::{BufRead, Write};
         let socket =
             std::env::temp_dir().join(format!("pa-settlement-test-{}.sock", std::process::id()));
         let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();

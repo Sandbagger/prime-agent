@@ -228,6 +228,11 @@ fn create_session(
     });
     if let Some(script) = script {
         config["script"] = json!(script.to_string_lossy());
+    } else {
+        // The TS daemon fixture installs this local-only provider. Persist the
+        // model choice so a stopped session wakes with the same offline engine.
+        config["provider"] = json!("faux");
+        config["model"] = json!("faux-1");
     }
     let response = wire.request(
         id,
@@ -770,6 +775,53 @@ fn ts_daemon_differential_cli_output() {
     let work = dir.path().join("work");
     std::fs::create_dir_all(&sessions).expect("sessions dir");
     std::fs::create_dir_all(&work).expect("work dir");
+    // Sends exercise a real TS worker, including saved-session wake. Register
+    // a deterministic provider instead of depending on ambient paid credentials.
+    let ts_path = if ts.is_absolute() {
+        ts.clone()
+    } else {
+        let found = Command::new("which")
+            .arg(&ts)
+            .output()
+            .expect("locate TS CLI");
+        assert!(found.status.success(), "locate TS CLI on PATH");
+        PathBuf::from(
+            String::from_utf8(found.stdout)
+                .expect("TS CLI path UTF-8")
+                .trim(),
+        )
+    };
+    let ts_path = ts_path.canonicalize().expect("resolve TS CLI path");
+    let ai_root = ts_path
+        .ancestors()
+        .map(|root| root.join("node_modules/@earendil-works/pi-ai/dist"))
+        .find(|root| root.join("providers/faux.js").is_file())
+        .expect("the installed TS package must include its faux provider");
+    let extensions = agent_dir.join("extensions");
+    std::fs::create_dir_all(&extensions).expect("fixture extensions dir");
+    let provider_import = serde_json::to_string(&ai_root.join("providers/faux.js"))
+        .expect("faux provider import path");
+    let registry_import = serde_json::to_string(&ai_root.join("api-registry.js"))
+        .expect("provider registry import path");
+    std::fs::write(
+        extensions.join("offline-fixture.ts"),
+        format!(
+            r#"import {{ registerFauxProvider, fauxAssistantMessage }} from {provider_import};
+import {{ getApiProvider }} from {registry_import};
+export default function(pi) {{
+    const provider = registerFauxProvider({{ api: "faux", provider: "faux", models: [{{ id: "faux-1" }}] }});
+    provider.setResponses(Array.from({{ length: 16 }}, () => () => fauxAssistantMessage("offline fixture reply")));
+    pi.registerProvider("faux", {{ api: "faux", baseUrl: "http://127.0.0.1:9", apiKey: "offline-fixture-key", models: provider.models, streamSimple: getApiProvider("faux").streamSimple }});
+}}
+"#
+        ),
+    )
+    .expect("write offline TS provider");
+    std::fs::write(
+        agent_dir.join("auth.json"),
+        json!({ "faux": { "type": "api_key", "key": "offline-fixture-key" } }).to_string(),
+    )
+    .expect("write fixture-only provider credential");
     // `schedule` cannot take --daemon-socket (TS parity); the daemon uses the default path.
     std::env::set_var("TMPDIR", dir.path());
     let socket = pa_daemon::socket::default_daemon_socket_path();
@@ -785,6 +837,7 @@ fn ts_daemon_differential_cli_output() {
         // The TS CLI resolves its manifest by walking up from the cwd; a Rust
         // checkout has no package.json, so run from the scratch work dir.
         .current_dir(&work)
+        .env("PI_OFFLINE", "1")
         .env("PRIME_AGENT_CODING_AGENT_DIR", &agent_dir)
         .env("TMPDIR", dir.path())
         .stdout(Stdio::null())

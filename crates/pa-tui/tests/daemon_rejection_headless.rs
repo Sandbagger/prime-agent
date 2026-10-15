@@ -109,6 +109,9 @@ impl MockSupervisor {
         loop {
             match self.listener.accept() {
                 Ok((stream, _)) => {
+                    // Darwin inherits O_NONBLOCK from the polling listener.
+                    // This mock serves each accepted connection with blocking reads.
+                    stream.set_nonblocking(false).expect("blocking mock stream");
                     let shared = std::sync::Arc::clone(&shared);
                     connections.push(std::thread::spawn(move || {
                         shared.serve_connection(stream);

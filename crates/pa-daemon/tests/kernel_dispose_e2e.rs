@@ -13,6 +13,10 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
+#[path = "support/processes.rs"]
+mod processes;
+use processes::kernel_pids;
+
 /// The three tests scan the whole process table, so this std lock serializes them.
 static TEST_LOCK: Mutex<()> = Mutex::new(());
 
@@ -46,28 +50,6 @@ fn kernel_python() -> Option<PathBuf> {
         candidate.display()
     );
     None
-}
-
-/// Every live `python -m rlm.repl` pid on the box (ambient kernels are part of the baseline).
-fn kernel_pids() -> Vec<u32> {
-    let mut found = Vec::new();
-    let entries = std::fs::read_dir("/proc").unwrap_or_else(|e| panic!("read /proc: {e}"));
-    for entry in entries.flatten() {
-        let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() else {
-            continue;
-        };
-        let Ok(cmdline) = std::fs::read_to_string(format!("/proc/{pid}/cmdline")) else {
-            continue;
-        };
-        // The kernel is spawned as `python -m rlm.repl` (NUL-separated argv): the adjacent
-        // pair avoids matching an unrelated process that merely mentions the module.
-        let args: Vec<&str> = cmdline.split('\0').collect();
-        if args.windows(2).any(|window| window == ["-m", "rlm.repl"]) {
-            found.push(pid);
-        }
-    }
-    found.sort_unstable();
-    found
 }
 
 /// Poll until at least one kernel pid exists outside `baseline`.
