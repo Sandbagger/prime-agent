@@ -169,6 +169,17 @@ impl RequestPayloadCapture {
         let Some(writer) = capture_writer() else {
             return;
         };
+        self.record_with_writer(writer, payload, model, session_id, request_seq);
+    }
+
+    fn record_with_writer(
+        &self,
+        writer: &CaptureWriter,
+        payload: &Value,
+        model: &pa_agent::types::Model,
+        session_id: Option<&str>,
+        request_seq: u64,
+    ) {
         // Reserve the slot first: the counter is the bound the writer releases from, so it
         // must never depend on the send's completion.
         let reserved = writer
