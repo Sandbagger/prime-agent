@@ -111,6 +111,15 @@ impl AgentMessageController for LinkAgentMessageController {
                     || ((!session_id.is_empty()) && child.session_id.as_deref() == Some(session_id))
             }) {
                 let child = children.swap_remove(position);
+                if let Some(registry) = self
+                    .children
+                    .as_ref()
+                    .filter(|_| active_session_id != child.active_session_id)
+                {
+                    registry
+                        .note_child_active_alias(&child.rlm_child_id, &active_session_id)
+                        .await;
+                }
                 let mut member = child_member(&child, name);
                 // A worker replacement keeps the durable ids but swaps the live one: the member
                 // keys on the row's CURRENT live id so role-addressed sends hit the live worker.
@@ -208,8 +217,8 @@ impl AgentMessageController for LinkAgentMessageController {
             anyhow::bail!("Agent messaging cannot target the sending session");
         }
         // A delivery to one of this session's own children starts a follow-up turn there:
-        // re-arm that child's usage observation BEFORE the delivery (a fast child can
-        // settle before the await returns; a late-armed observation never bills).
+        // re-arm usage observation before delivery; a fast child can settle before
+        // the await returns, so late-armed observation never bills.
         if let Some(children) = &self.children {
             children.observe_child_usage(&input.target).await?;
         }

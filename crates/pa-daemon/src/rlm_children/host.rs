@@ -148,6 +148,7 @@ impl RlmSubagentHost for SupervisorChildSessions {
                     session_name: created.session_name.clone().unwrap_or_else(|| name.clone()),
                     active_session_id: created.active_session_id.clone(),
                     session_id: created.session_id.clone(),
+                    active_session_aliases: std::collections::HashSet::new(),
                     session_dir: created.session_dir.clone(),
                     model: model.clone(),
                     label: rlm_child_label(&request.prompt),
@@ -160,6 +161,7 @@ impl RlmSubagentHost for SupervisorChildSessions {
                     notice_delivered: false,
                     prompt_admitted: false,
                     collect_kickoff: Arc::new(tokio::sync::Notify::new()),
+                    prompt_admission: tokio::sync::watch::Sender::new(None),
                     error: None,
                     closed_by_parent: false,
                     session_file: created.session_file.clone(),
@@ -249,6 +251,13 @@ impl RlmSubagentHost for SupervisorChildSessions {
                 // child is closed with it, so the detached task prompt
                 // never fires.
                 if watcher_record.lock().await.closed_by_parent {
+                    watcher_record
+                        .lock()
+                        .await
+                        .prompt_admission
+                        .send_replace(Some(Err(
+                            "RLM child closed before its task prompt was admitted".to_string(),
+                        )));
                     return;
                 }
                 if let Err(error) = watcher_this
@@ -282,6 +291,14 @@ impl RlmSubagentHost for SupervisorChildSessions {
                         eprintln!(
                             "pa-daemon: RLM child task prompt failed for {child_log_id}: {error:#}; retry failed: {retry_error:#}"
                         );
+                        {
+                            let record = watcher_record.lock().await;
+                            if record.prompt_admission.borrow().is_none() {
+                                record
+                                    .prompt_admission
+                                    .send_replace(Some(Err(format!("{retry_error:#}"))));
+                            }
+                        }
                         let _ = watcher_this
                             .kill_child(&child_active_session_id, ChildCloseReason::Killed)
                             .await;
@@ -295,7 +312,12 @@ impl RlmSubagentHost for SupervisorChildSessions {
                         return;
                     }
                 }
-                watcher_record.lock().await.prompt_admitted = true;
+                {
+                    let mut record = watcher_record.lock().await;
+                    record.prompt_admitted = true;
+                    let result = record.prompt_admission.borrow().clone().unwrap_or(Ok(()));
+                    record.prompt_admission.send_replace(Some(result));
+                }
                 watcher_this.watch_child_settle(&watcher_record).await;
             });
             Ok(RlmSpawnHandle {
@@ -436,6 +458,11 @@ impl RlmSubagentHost for SupervisorChildSessions {
             {
                 let mut record = record.lock().await;
                 record.closed_by_parent = true;
+                if record.prompt_admission.borrow().is_none() {
+                    record.prompt_admission.send_replace(Some(Err(
+                        "RLM child closed before its task prompt was admitted".to_string(),
+                    )));
+                }
                 if was_running {
                     record.settled_status = Some("cancelled");
                     record.error = Some("Deleted by parent orchestrator".to_string());
@@ -533,11 +560,8 @@ impl RlmSubagentHost for SupervisorChildSessions {
                             .collect::<Vec<_>>();
                         match matches.len() {
                             0 => return Err(miss),
-                            1 => deleted_results.push(
-                                SupervisorChildSessions::deleted_collect_result(
-                                    &matches[0],
-                                ),
-                            ),
+                            1 => deleted_results
+                                .push(SupervisorChildSessions::deleted_collect_result(&matches[0])),
                             _ => bail!(
                                 "RLM child selector \"{target}\" is ambiguous in the current parent session"
                             ),
@@ -657,7 +681,9 @@ impl RlmSubagentHost for SupervisorChildSessions {
             };
             if let Some(record) = &record {
                 if record.lock().await.closed_by_parent {
-                    bail!("rlm.rename can only rename the current session or one of its direct children");
+                    bail!(
+                        "rlm.rename can only rename the current session or one of its direct children"
+                    );
                 }
             }
             // The rename itself is daemon-owned: the supervisor's live

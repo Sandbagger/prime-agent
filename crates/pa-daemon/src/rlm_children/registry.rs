@@ -167,6 +167,11 @@ impl SupervisorChildSessionsInner {
                 let mut record = record.lock().await;
                 record.closed_by_parent = true;
                 record.notice_delivered = true;
+                if record.prompt_admission.borrow().is_none() {
+                    record.prompt_admission.send_replace(Some(Err(
+                        "RLM child closed before its task prompt was admitted".to_string(),
+                    )));
+                }
             }
             // Capture before the close: the teardown settles each run;
             // nothing observes the child after the kill.
@@ -333,6 +338,7 @@ fn ledger_child_records(
             session_name: edge.name,
             active_session_id: session_id.clone().unwrap_or_default(),
             session_id,
+            active_session_aliases: std::collections::HashSet::new(),
             session_dir: child
                 .parent()
                 .map(|dir| dir.to_string_lossy().into_owned())
@@ -381,6 +387,7 @@ fn ledger_child_records(
             notice_delivered: true,
             prompt_admitted: true,
             collect_kickoff: Arc::new(tokio::sync::Notify::new()),
+            prompt_admission: tokio::sync::watch::Sender::new(Some(Ok(()))),
             error: None,
             closed_by_parent: false,
             session_file: Some(edge.child),
