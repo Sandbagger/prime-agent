@@ -799,6 +799,60 @@ mod tests {
         assert_eq!(model["thinkingLevelMap"]["off"], "none");
     }
 
+    /// The malformed-entitlement regression: a 200 body without a `data`
+    /// array is a fetch failure, not an empty authorization — an empty
+    /// success would wipe the authorized private models and pin the wipe
+    /// into the fingerprint cache with a fresh TTL.
+    #[tokio::test]
+    async fn a_malformed_entitlement_payload_keeps_the_authorized_private_models() {
+        let fixture = fixture(create_phase_answers()).await;
+        // Age the on-disk authorization past its TTL so the next refresh
+        // refetches the entitlements in the background.
+        let cache_path = fixture
+            .agent_dir
+            .join("prime-inference-private-models.json");
+        let document: Value =
+            serde_json::from_str(&std::fs::read_to_string(&cache_path).expect("cache")).unwrap();
+        std::fs::write(
+            &cache_path,
+            serde_json::to_string(&json!({
+                "fingerprint": document["fingerprint"],
+                "data": document["data"],
+                "refreshedAt": 1u64,
+            }))
+            .unwrap(),
+        )
+        .expect("age the cache");
+        // The catalog chain stays hourly-gated from the create path; only the
+        // private entitlement fetch runs, and its body is malformed.
+        fixture
+            .server
+            .push(Answer::Raw(ok_json(r#"{"data": {"not": "an array"}}"#)));
+        let requests_before = fixture.server.request_count();
+
+        let served = get_model_catalog(&fixture.worker, "catalog-session").await;
+        assert!(
+            has_model(&served, "internal/team-a-private"),
+            "the cached authorization serves instantly"
+        );
+        // The background refresh consumed the malformed answer; the deadline
+        // is on the request log, not a fixed wait.
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while fixture.server.request_count() < requests_before + 1 {
+            assert!(
+                Instant::now() < deadline,
+                "the stale-cache background refresh never fetched: {:?}",
+                fixture.server.recorded_requests()
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let after = get_model_catalog(&fixture.worker, "catalog-session").await;
+        assert!(
+            has_model(&after, "internal/team-a-private"),
+            "a malformed entitlement payload must not wipe the authorized private models"
+        );
+    }
+
     #[tokio::test]
     async fn refresh_failure_keeps_the_last_good_catalog_and_stays_silent() {
         let mut fixture = fixture(create_phase_answers()).await;
