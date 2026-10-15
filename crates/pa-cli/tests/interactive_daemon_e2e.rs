@@ -15,6 +15,10 @@
 //! `script` seam is the faux provider contract; the product never sets it.
 #![cfg(unix)]
 
+#[path = "support/processes.rs"]
+mod processes;
+use processes::{child_pids_of, process_alive};
+
 use std::fmt::Write as _;
 #[cfg(target_os = "linux")]
 use std::os::unix::process::CommandExt;
@@ -110,48 +114,8 @@ impl Drop for DetachedDaemon {
     }
 }
 
-fn child_pids_of(ppid: u32) -> Vec<u32> {
-    let mut pids = Vec::new();
-    let entries = std::fs::read_dir("/proc").expect("read /proc");
-    for entry in entries.flatten() {
-        let Ok(entry_pid) = entry.file_name().to_string_lossy().parse::<u32>() else {
-            continue;
-        };
-        let Ok(stat) = std::fs::read_to_string(format!("/proc/{entry_pid}/stat")) else {
-            continue;
-        };
-        // `comm` can contain spaces and parens, so parse after the last ')'.
-        let Some((_, rest)) = stat.rsplit_once(')') else {
-            continue;
-        };
-        let mut fields = rest.split_whitespace();
-        fields.next(); // process state
-        let Ok(parent) = fields.next().unwrap_or_default().parse::<u32>() else {
-            continue;
-        };
-        if parent == ppid {
-            pids.push(entry_pid);
-        }
-    }
-    pids
-}
-
-/// Liveness that ignores zombies: a detached child nobody reaps keeps its
-/// `/proc` entry, so path existence alone would call an exited process alive.
-fn process_alive(pid: u32) -> bool {
-    let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
-        return false;
-    };
-    // `comm` can contain spaces and parens, so parse after the last ')'.
-    let Some((_, rest)) = stat.rsplit_once(')') else {
-        return false;
-    };
-    let state = rest.split_whitespace().next().unwrap_or_default();
-    !state.starts_with('Z') && !state.starts_with('X')
-}
-
-/// Shut the supervisor down by protocol and assert it, its workers, and its
-/// socket all went away.
+/// Shut the supervisor down by protocol and assert it and its workers exited,
+/// leaving no live listener and a reusable socket path.
 fn assert_daemon_stops_clean(socket: &Path) {
     // Sync JSONL exchange (called from the sync guard path).
     use std::io::{BufRead, BufReader, Write};
@@ -188,10 +152,40 @@ fn assert_daemon_stops_clean(socket: &Path) {
         );
         std::thread::sleep(Duration::from_millis(50));
     }
+    #[cfg(target_os = "linux")]
     assert!(
         !socket.exists(),
         "the spawned supervisor removed its socket file"
     );
+    #[cfg(not(target_os = "linux"))]
+    {
+        // BSD exit cleanup preserves the path: a refused connect cannot
+        // distinguish a closed listener from a live successor's full backlog.
+        assert!(
+            UnixStream::connect(socket).is_err(),
+            "the stopped supervisor left no live listener"
+        );
+        // This sync guard also runs inside async tests; prepare on another
+        // thread so its runtime cannot nest inside the test's runtime.
+        std::thread::scope(|scope| {
+            scope
+                .spawn(|| {
+                    tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .expect("socket reuse runtime")
+                        .block_on(pa_daemon::socket::prepare_socket_path(socket))
+                        .expect("prepare the stopped supervisor's socket for reuse");
+                })
+                .join()
+                .expect("socket reuse preparation thread");
+        });
+        let replacement = std::os::unix::net::UnixListener::bind(socket)
+            .expect("bind a replacement listener at the stopped supervisor's path");
+        drop(UnixStream::connect(socket).expect("connect to the replacement listener"));
+        drop(replacement);
+        std::fs::remove_file(socket).expect("remove the fixture's replacement socket");
+    }
     for pid in worker_pids {
         let deadline = Instant::now() + Duration::from_secs(10);
         while process_alive(pid) {
@@ -280,18 +274,43 @@ fn sweep_orphan_test_daemons() {
         return; // a later test's spawn: the first spawn already swept
     }
     let mut swept = 0;
-    for entry in std::fs::read_dir("/proc").expect("read /proc").flatten() {
-        let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() else {
-            continue;
+    for (pid, parsed_ppid) in processes::process_parents() {
+        #[cfg(target_os = "linux")]
+        let args: Vec<String> = {
+            let Ok(cmdline) = std::fs::read(format!("/proc/{pid}/cmdline")) else {
+                continue;
+            };
+            cmdline
+                .split(|b| *b == 0)
+                .map(|b| String::from_utf8_lossy(b).into_owned())
+                .collect()
         };
-        let Ok(cmdline) = std::fs::read(format!("/proc/{pid}/cmdline")) else {
-            continue;
+        #[cfg(not(target_os = "linux"))]
+        let args: Vec<String> = {
+            // ps flattens argv: require the actual test executable before
+            // interpreting its fixed daemon flags, never another process's text.
+            let expected = std::fs::canonicalize(env!("CARGO_BIN_EXE_prime-agent"))
+                .expect("canonical test executable");
+            if pa_types::platform::process::process_executable_path(pid)
+                .and_then(|path| std::fs::canonicalize(path).ok())
+                != Some(expected)
+            {
+                continue;
+            }
+            let Ok(output) = Command::new("/bin/ps")
+                .args(["-ww", "-p", &pid.to_string(), "-o", "command="])
+                .output()
+            else {
+                continue;
+            };
+            if !output.status.success() {
+                continue;
+            }
+            String::from_utf8_lossy(&output.stdout)
+                .split_whitespace()
+                .map(str::to_owned)
+                .collect()
         };
-        // /proc cmdline is NUL-separated.
-        let args: Vec<String> = cmdline
-            .split(|b| *b == 0)
-            .map(|b| String::from_utf8_lossy(b).into_owned())
-            .collect();
         let flag = |needle: &str| args.iter().any(|a| a == needle);
         let arg_after = |needle: &str| {
             args.iter()
@@ -315,20 +334,6 @@ fn sweep_orphan_test_daemons() {
         if !orphan_socket_dir {
             continue;
         }
-        let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
-            continue;
-        };
-        let Some((_, rest)) = stat.rsplit_once(')') else {
-            continue;
-        };
-        let Ok(parsed_ppid) = rest
-            .split_whitespace()
-            .nth(1)
-            .unwrap_or_default()
-            .parse::<u32>()
-        else {
-            continue;
-        };
         if parsed_ppid != 1 && process_alive(parsed_ppid) {
             continue; // a live run's daemon: its test binary is still up
         }
@@ -2488,16 +2493,17 @@ async fn tui_renders_and_fires_user_keybindings_from_settings() {
     let rendered = outcome.frames.join("\n");
 
     // The hint renders the user's binding, not the default (operator directive 2026-09-28).
+    let override_key = pa_tui::keybindings::format_key_text("ctrl+alt+x");
     assert!(
-        rendered.contains("Collapsed mode (Ctrl+Alt+X to expand)"),
+        rendered.contains(&format!("Collapsed mode ({override_key} to expand)")),
         "the prompt-context hint renders the override:\n{rendered}"
     );
     assert!(
-        rendered.contains("Details mode (Ctrl+Alt+X to expand)"),
+        rendered.contains(&format!("Details mode ({override_key} to expand)")),
         "the override key cycled conversation detail:\n{rendered}"
     );
     assert!(
-        !rendered.contains("Expanded mode (Ctrl+Alt+X to collapse)"),
+        !rendered.contains(&format!("Expanded mode ({override_key} to collapse)")),
         "the default ctrl+o must not cycle after the override:\n{rendered}"
     );
     assert!(
@@ -2515,7 +2521,9 @@ async fn tui_renders_and_fires_user_keybindings_from_settings() {
     );
     // The removed default key is gone (no other default binding uses ctrl+o).
     assert!(
-        !rendered.contains("Ctrl+O"),
+        !rendered
+            .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '+')
+            .any(|key| key == "Ctrl+O"),
         "the hotkeys guide must not show the removed default:\n{rendered}"
     );
     // The guide stayed out of the transcript (the operator's no-flooding
@@ -2526,7 +2534,7 @@ async fn tui_renders_and_fires_user_keybindings_from_settings() {
         "the hotkeys guide never lands in the transcript:\n{last}"
     );
     assert!(
-        last.contains("Details mode (Ctrl+Alt+X to expand)"),
+        last.contains(&format!("Details mode ({override_key} to expand)")),
         "the dock returned after the panel closed:\n{last}"
     );
     drop(supervisor);

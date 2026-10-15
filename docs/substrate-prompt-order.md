@@ -64,6 +64,28 @@ binary directories on PATH instead of HOME-dependent version-manager shims.
 Never overwrite a shared runtime to satisfy tests or rewrite an earlier failed
 workflow outcome after fixing these prerequisites.
 
+The isolated interpreter must also import the matching built-in Python skills,
+including `goal`; a `.pth` entry pointing at another site-packages directory does
+not recursively process that directory's editable hooks. Package those skills
+and verify their import origins as described in `substrate-local-install.md`.
+
+Terminal fixtures need a consistent baseline: `TERM=xterm-256color`, with
+`TERM_PROGRAM`, `KITTY_WINDOW_ID`, `GHOSTTY_RESOURCES_DIR`, `WEZTERM_PANE`, `TMUX`,
+`STY`, `ZELLIJ`, `SSH_CONNECTION`, and `SSH_TTY` absent unless a case sets them.
+Inherited `TERM=dumb` suppressed capability queries and caused false failures.
+The legacy CLI differential fixture also requires GNU `timeout` and an explicit
+`PA_TS_BINARY` plus its actual Node interpreter on PATH. A missing `timeout`
+fails before either CLI starts. The installed TS 0.9.8 comparison subsequently
+reported 28 of 199 corpus differences, including stdout/stderr routing and
+changed options; this is not a passing full-CLI parity result.
+
+On a storage-constrained host, retain the workspace dependency feature set when
+selecting tests (`cargo test --workspace --test <target>`). Switching to a
+single-package build can duplicate native libraries. After ENOSPC, verify test
+artifacts are executable Mach-O files: rust-objcopy can leave a small data file
+while Cargo reports a stripping warning. Never count an unexecuted target as a
+passing test or increase timeouts to conceal failed process observation.
+
 
 ## Candidate end-to-end result
 

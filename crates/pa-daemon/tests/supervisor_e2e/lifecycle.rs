@@ -62,10 +62,9 @@ fn supervisor_end_to_end_scripted_session_lifecycle() {
         Some("protocol-7-schema-30-8e4b17c2a9f5".to_string())
     );
     assert!(hello["supervisorOwnerToken"].is_string());
-    assert!(hello["supervisorProcessStartId"]
-        .as_str()
-        .unwrap_or_default()
-        .starts_with("proc:"));
+    let start_id = pa_types::platform::process::process_start_id(_daemon.child.id())
+        .expect("supervisor process start identity");
+    assert_eq!(hello["supervisorProcessStartId"], start_id);
     assert_eq!(
         hello["serverCapabilities"],
         serde_json::json!([
