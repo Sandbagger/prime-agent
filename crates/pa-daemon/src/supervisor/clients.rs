@@ -132,7 +132,7 @@ impl Supervisor {
             }),
             supervisor_generation: Some(format!("sup:{}", std::process::id())),
             supervisor_pid: Some(u64::from(std::process::id())),
-            supervisor_owner_token: Some(uuid::Uuid::new_v4().to_string()),
+            supervisor_owner_token: Some(self.owner_token.clone()),
             supervisor_process_start_id: crate::protocol::process_start_id(std::process::id()),
             supervisor_socket_path: Some(self.options.socket_path.to_string_lossy().to_string()),
             update_resume: Some(self.restore.hello_resume()),

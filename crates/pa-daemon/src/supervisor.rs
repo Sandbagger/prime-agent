@@ -112,6 +112,8 @@ use crate::{socket, util};
 
 pub struct Supervisor {
     pub(crate) options: SupervisorOptions,
+    /// Stable ownership identity for this supervisor lifetime, across reconnects.
+    owner_token: String,
     descriptor_dir: PathBuf,
     /// The bind-time filesystem identity of this supervisor's socket file
     /// (TS `DaemonSupervisor` captures `socketIdentity` right after
@@ -255,6 +257,7 @@ impl Supervisor {
         )?;
         Ok(Supervisor {
             options,
+            owner_token: uuid::Uuid::new_v4().to_string(),
             descriptor_dir,
             bound_socket_identity: std::sync::Mutex::new(None),
             worker_connect_budget: std::sync::Mutex::new(None),

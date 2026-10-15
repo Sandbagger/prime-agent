@@ -7,6 +7,38 @@ use std::path::Path;
 use super::*;
 
 #[test]
+fn supervisor_owner_identity_is_stable_across_connections_and_fresh_per_lifetime() {
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let socket = dir.path().join("identity.sock");
+    let agent_dir = dir.path().join("agent");
+    std::fs::create_dir_all(&agent_dir).expect("agent dir");
+    let daemon = spawn_daemon(&socket, &agent_dir);
+    let (first_client, first) = Client::connect(&socket);
+    drop(first_client);
+    let (second_client, second) = Client::connect(&socket);
+    let identity = |hello: &serde_json::Value| {
+        serde_json::json!({
+            "token": hello["supervisorOwnerToken"],
+            "pid": hello["supervisorPid"],
+            "start": hello["supervisorProcessStartId"],
+            "generation": hello["supervisorGeneration"],
+            "socket": hello["supervisorSocketPath"],
+        })
+    };
+    assert_eq!(identity(&first), identity(&second));
+    assert_ne!(first["clientId"], second["clientId"]);
+    drop(second_client);
+    drop(daemon);
+    let successor_socket = dir.path().join("successor.sock");
+    let _successor = spawn_daemon(&successor_socket, &agent_dir);
+    let (_client, successor) = Client::connect(&successor_socket);
+    assert_ne!(
+        first["supervisorOwnerToken"],
+        successor["supervisorOwnerToken"]
+    );
+}
+
+#[test]
 fn supervisor_end_to_end_scripted_session_lifecycle() {
     let dir = tempfile::TempDir::new().expect("temp dir");
     let socket = dir.path().join("daemon.sock");
