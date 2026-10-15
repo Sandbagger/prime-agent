@@ -97,3 +97,35 @@ Receipts correlated to traces; denied admission made no provider call.
 Receipt and binary digest: `/private/tmp/native-canary-c2lxoyhm/qualification.json`.
 This qualifies the built candidate's exercised paths; it does not replace the
 full workspace gates or claim installation.
+
+## Follow-on qualification: socket close and test isolation
+
+The CLI now configures its fixed read poll timeout once at connection creation.
+On Darwin, resetting it after peer closure can raise EINVAL before buffered
+closing frames are consumed. The deterministic buffered-close regression fails
+with the fix removed; all five CLI and thirteen TUI daemon-client tests pass
+with it restored.
+
+The TS daemon-command fixture supplies a deterministic local faux provider,
+dummy credential and explicit model, including saved-session wake. All five
+command cases pass. The fork fixture drains PTY output while awaiting exit;
+both cases pass in 3.36 seconds. All sixteen supervisor integration cases pass.
+
+The serial workspace attempt passed all 41 interactive-daemon cases, including
+terminal close and streaming, but did not complete: 50 completed targets
+reported 904 passes, eight failures and four ignores; two terminal executables
+hung during child cleanup and were terminated before the overall run was
+stopped. These are partial counts, not a passing merge gate. Remaining blockers
+include inherited TS CLI differences, terminal lifecycle tests and a packaging
+fixture that expects Linux paths on macOS. No release/default switch occurred.
+
+All six substrate canaries passed again after these corrections, with verified
+cleanup and zero provider calls for denied admission. Receipt:
+ /private/tmp/native-canary-pp_ge3js/qualification.json.
+Tested debug binary SHA-256:
+ f6556068af41e4530d761511dbb25bc011ddc6b7b4909b529429094f2a169927.
+
+Reusable fixture discipline: supply provider identity for success-path tests,
+consume PTY output through exit, and check artifact executability after any
+out-of-space stripping warning. Cargo can finish after producing an unusable
+stripped artifact; do not classify the resulting launch errors as code failures.
