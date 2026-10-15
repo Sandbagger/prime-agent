@@ -170,10 +170,9 @@ impl Renderer {
             UiMode::Terminal => {
                 // Enable Windows VT processing before raw ANSI mode writes.
                 pa_types::platform::console_init();
-                // The raw-mode bracket's own `cfmakeraw` write clears IXON, which is the
-                // kernel's one trigger for lifting a pending Ctrl+S stop: a tty stopped at the
-                // shell prompt self-heals here (verified by the flow e2e's launch route).
-                terminal::enable_raw_mode()?;
+                // Resume inherited output flow before the first terminal write,
+                // then let crossterm save and enter raw mode.
+                crate::terminal_mode::enable_raw_mode()?;
                 // The terminal state changed: every later setup step is fallible (the alt-screen
                 // enter, the mode enables, the terminal construction) and an error from any of them
                 // still owns the release — the flag arms here, not at the end of setup.
@@ -330,7 +329,7 @@ impl Renderer {
                 // The raw re-arm's `cfmakeraw` write clears IXON - the kernel's one trigger
                 // for lifting a pending Ctrl+S stop - so a stop armed at the shell never holds
                 // the resume's repaint.
-                terminal::enable_raw_mode()?;
+                crate::terminal_mode::enable_raw_mode()?;
                 crate::altscreen::enter()?;
                 // The suspend's release tail showed the cursor for the plain terminal; taking
                 // the surface back hides it again — otherwise the visible cursor sits at a

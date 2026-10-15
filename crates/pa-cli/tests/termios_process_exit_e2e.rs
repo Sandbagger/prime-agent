@@ -239,6 +239,21 @@ fn a_launch_on_a_ctrl_s_stopped_tty_flows_and_exits_whole() {
     let _lock = harness::harness_lock();
     let mut harness =
         DifferentialHarness::start(&ChildSpec::new("chat").env(CHILD_PREMOUNT_GATE_ENV, "1"));
+    // Darwin defaults IXANY on: the sentinel itself would resume XOFF.
+    // This route explicitly models a tty that resumes only on XON, and
+    // records that starting state before the product mounts.
+    let fd = harness.master.file.as_raw_fd();
+    let mut attributes = std::mem::MaybeUninit::<libc::termios>::uninit();
+    // SAFETY: tcgetattr initializes the owned PTY's termios on success.
+    assert_eq!(unsafe { libc::tcgetattr(fd, attributes.as_mut_ptr()) }, 0);
+    let mut attributes = unsafe { attributes.assume_init() };
+    attributes.c_iflag &= !libc::IXANY;
+    // SAFETY: attributes is an initialized snapshot of this owned PTY.
+    assert_eq!(
+        unsafe { libc::tcsetattr(fd, libc::TCSANOW, &raw const attributes) },
+        0
+    );
+    harness.before = Termios::capture(fd);
     assert!(
         harness.before.input_flow_control_on(),
         "the pre-launch pty must run software flow control for the stop to arm"
@@ -420,6 +435,11 @@ impl SuspendCycleHarness {
 impl Drop for SuspendCycleHarness {
     fn drop(&mut self) {
         // A panicking wait must never leak the pty child.
+        // Darwin can block a dying session leader in ttyclose while output
+        // is stopped. Close the emulator peer before reaping during teardown.
+        if let Ok(null) = std::fs::File::open("/dev/null") {
+            drop(std::mem::replace(&mut self.master.file, null));
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
     }

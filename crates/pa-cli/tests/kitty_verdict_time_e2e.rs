@@ -528,6 +528,11 @@ impl VerdictHarness {
     }
 
     fn finish(mut self) {
+        // Darwin can block a dying session leader in ttyclose while output
+        // is stopped. Close the emulator peer before reaping during teardown.
+        if let Ok(null) = std::fs::File::open("/dev/null") {
+            drop(std::mem::replace(&mut self.master.file, null));
+        }
         let _ = self.child.kill();
         // Reap the child so no zombie is left behind.
         let _ = self.child.wait();
@@ -537,6 +542,11 @@ impl VerdictHarness {
 impl Drop for VerdictHarness {
     fn drop(&mut self) {
         // A panicking wait must never leak the pty child.
+        // Darwin can block a dying session leader in ttyclose while output
+        // is stopped. Close the emulator peer before reaping during teardown.
+        if let Ok(null) = std::fs::File::open("/dev/null") {
+            drop(std::mem::replace(&mut self.master.file, null));
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
     }

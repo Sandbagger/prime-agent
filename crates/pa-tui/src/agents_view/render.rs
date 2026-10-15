@@ -796,7 +796,7 @@ impl Renderer {
                 pa_types::platform::console_init();
                 // The raw-mode bracket's `cfmakeraw` write clears IXON, the kernel's one
                 // trigger for lifting a pending Ctrl+S stop (see the flow e2e's launch route).
-                crossterm::terminal::enable_raw_mode()?;
+                crate::terminal_mode::enable_raw_mode()?;
                 // The terminal state changed: every later setup step is fallible and still owns
                 // the release — the flag arms here, not at the end of setup.
                 surface_mounted.store(true, std::sync::atomic::Ordering::SeqCst);

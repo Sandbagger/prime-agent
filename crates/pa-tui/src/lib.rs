@@ -105,6 +105,7 @@ pub mod snapshot;
 pub mod subagents;
 mod suspend;
 mod terminal_image;
+mod terminal_mode;
 pub mod theme;
 pub mod toast;
 pub mod tool_card;

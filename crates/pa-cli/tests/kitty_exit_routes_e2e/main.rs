@@ -19,7 +19,7 @@ use std::io::{BufRead, Read, Write};
 use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use nix::fcntl::{fcntl, FcntlArg::F_SETFL, OFlag};
@@ -274,7 +274,9 @@ fn run_route(route: Route, known_terminal: bool) {
                     harness.write(b"\x03");
                     std::thread::sleep(Duration::from_millis(400));
                     harness.write(b"\x03");
-                } else if !last {
+                } else if !last && needle != KITTY_QUERY {
+                    // Capability queries need an immediate terminal reply;
+                    // waiting for paint silence can consume the probe window.
                     harness.drain_until_quiet(6);
                 }
             }
@@ -487,8 +489,12 @@ fn run_route(route: Route, known_terminal: bool) {
 /// The pty harnesses serialize: raw ptys and process-group signals flake on shared CPUs.
 static HARNESS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+#[path = "../terminal_state_differential_e2e/terminal_shell.rs"]
+#[allow(dead_code)]
+mod terminal_shell;
+
 struct RouteHarness {
-    child: Child,
+    child: terminal_shell::TerminalChild,
     _server: std::thread::JoinHandle<()>,
     master: PtyReader,
 }
@@ -588,6 +594,11 @@ impl RouteHarness {
     }
 
     fn finish(mut self) {
+        // Darwin can block a dying session leader in ttyclose while output
+        // is stopped. Close the emulator peer before reaping during teardown.
+        if let Ok(null) = std::fs::File::open("/dev/null") {
+            drop(std::mem::replace(&mut self.master.file, null));
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
@@ -596,6 +607,11 @@ impl RouteHarness {
 impl Drop for RouteHarness {
     fn drop(&mut self) {
         // A panicking wait must never leak the pty child.
+        // Darwin can block a dying session leader in ttyclose while output
+        // is stopped. Close the emulator peer before reaping during teardown.
+        if let Ok(null) = std::fs::File::open("/dev/null") {
+            drop(std::mem::replace(&mut self.master.file, null));
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
@@ -737,7 +753,12 @@ impl PtyReader {
 
 /// A child of this very binary, re-executed in child mode with the pty slave
 /// as its CONTROLLING terminal (setsid + TIOCSCTTY).
-fn spawn_child(route: Route, socket: &Path, slave: &OwnedFd, known_terminal: bool) -> Child {
+fn spawn_child(
+    route: Route,
+    socket: &Path,
+    slave: &OwnedFd,
+    known_terminal: bool,
+) -> terminal_shell::TerminalChild {
     fn claim_controlling_tty(fd: i32) -> std::io::Result<()> {
         nix::unistd::setsid()?;
         #[cfg(target_vendor = "apple")]
@@ -751,7 +772,7 @@ fn spawn_child(route: Route, socket: &Path, slave: &OwnedFd, known_terminal: boo
         Ok(())
     }
     let slave_fd = slave.as_raw_fd();
-    let mut command = Command::new(std::env::current_exe().expect("test binary"));
+    let mut command = terminal_shell::command(socket);
     command
         .arg("--exact")
         .arg("kitty_exit_child_mode")
@@ -781,7 +802,7 @@ fn spawn_child(route: Route, socket: &Path, slave: &OwnedFd, known_terminal: boo
     unsafe {
         command.pre_exec(move || claim_controlling_tty(slave_fd));
     }
-    command.spawn().expect("spawn pty child")
+    terminal_shell::TerminalChild::shell(command.spawn().expect("spawn pty child"), socket)
 }
 
 fn slave_as_stdio(slave: &OwnedFd) -> Stdio {

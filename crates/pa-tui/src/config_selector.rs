@@ -5,7 +5,6 @@
 
 use anyhow::Result;
 use crossterm::event::{Event, KeyEvent};
-use crossterm::terminal::{self};
 use ratatui::Terminal;
 use std::time::{Duration, Instant};
 
@@ -566,7 +565,7 @@ fn run_selector_surface(
     pa_types::platform::console_init();
     // The raw-mode bracket's `cfmakeraw` write clears IXON, the kernel's
     // one trigger for lifting a pending Ctrl+S stop.
-    terminal::enable_raw_mode()?;
+    crate::terminal_mode::enable_raw_mode()?;
     // The alternate screen mounts through the ownership module, so the
     // surface's alt-screen state is tracked for every exit path.
     crate::altscreen::enter()?;
