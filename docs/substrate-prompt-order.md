@@ -129,3 +129,41 @@ Reusable fixture discipline: supply provider identity for success-path tests,
 consume PTY output through exit, and check artifact executability after any
 out-of-space stripping warning. Cargo can finish after producing an unusable
 stripped artifact; do not classify the resulting launch errors as code failures.
+
+## Qualification repairs following the blocked workspace run
+
+The CLI verifier now distinguishes exact shared behavior from documented
+0.9.8-to-0.10 migrations. Both sides of each migration have independent exact
+expectations; no mismatch is accepted by itself. The genuine TS 0.9.8 corpus,
+export checks and generated mutation checks pass. See cli-versioned-contract.md
+for upstream provenance, the explicit native behavior decisions and the pinned
+reference. Documentation-path normalization also rejects inline diagnostic
+mutations, demonstrated red/green against the original and corrected functions.
+
+MacOS fixtures now model the terminal's real ownership: a surviving shell owns
+the controlling session while the product exits. They drain output while
+waiting, close the emulator peer before reaping a killed session leader, and
+answer terminal capability queries as soon as observed. Tests still assert the
+product exit status, full mode/termios restoration and post-exit echo. A private
+mock socket is unlinked to refuse new connections without disrupting existing
+ones. No output or restoration assertion was removed.
+
+The stopped-terminal fixture explicitly disables Darwin's default IXANY before
+arming XOFF, so its sentinel cannot accidentally resume output. This exposed a
+real product defect: cfmakeraw clearing IXON does not lift XOFF on Darwin.
+The existing best-effort restart_output primitive now also calls TCOON; all
+five raw-mode entry/resume sites share a private wrapper that invokes it before
+terminal writes. Crossterm retains ownership of termios capture and restoration.
+No public API or dependency changed. The real stopped-tty regression changed
+from a 31.72-second timeout to a passing 17-case termios suite in 2.32 seconds.
+
+Focused terminal regressions passed: two exit-route cases, eight probe-timing
+cases and 29 terminal-state cases. Packaging uses the actual host platform.
+Editor readiness recognizes the hidden caret park, not splash artwork;
+generated cases exercise 90 coordinate combinations at every read boundary.
+Kernel disposal, passivation and parent-death fixtures use portable process
+probes, with persisted process-start identity checked before killing a worker.
+All three daemon targets pass after actual /proc failures were reproduced.
+
+These are focused results, not a claim that the complete release gate passed.
+Retain the actual make-check and release receipts when promoting the candidate.
