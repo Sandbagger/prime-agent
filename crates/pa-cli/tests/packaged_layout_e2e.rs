@@ -656,8 +656,8 @@ fn packaging_dry_run_produces_artifact() {
         let fixture = split_paired_fixture(
             python,
             env!("CARGO_PKG_VERSION"),
-            "x86_64-unknown-linux-gnu",
-            "linux-x64",
+            &format!("{}-unknown-linux-gnu", std::env::consts::ARCH),
+            &release_platform_tag(std::env::consts::OS, std::env::consts::ARCH),
         );
         (
             fixture.shipped.into(),
@@ -667,15 +667,8 @@ fn packaging_dry_run_produces_artifact() {
     } else {
         (env!("CARGO_BIN_EXE_prime-agent").into(), None, None)
     };
-    // The platform tag the packer derives on this host: linux-x64 on the
-    // linux CI host, win32-x64 on the windows-latest battery (the channel
-    // alias, never a bare `windows-x64` — the naming the update reader's
-    // manifest contract requires).
-    let host_platform = if cfg!(windows) {
-        "win32-x64"
-    } else {
-        "linux-x64"
-    };
+    // Mirror package_release.py's host OS/architecture aliases.
+    let host_platform = release_platform_tag(std::env::consts::OS, std::env::consts::ARCH);
     let staged_binary_name = if cfg!(windows) {
         "prime-agent.exe"
     } else {
@@ -1006,4 +999,19 @@ fn bootstrap_kernel_venv_from_packaged_sidecar() {
         serde_json::Value::Bool(true),
         "receipt: {payload}"
     );
+}
+
+fn release_platform_tag(os: &str, arch: &str) -> String {
+    let system = match os {
+        "macos" => "darwin",
+        "windows" => "win32",
+        "linux" => "linux",
+        other => panic!("unsupported release platform: {other}"),
+    };
+    let arch = match arch {
+        "x86_64" | "amd64" => "x64",
+        "aarch64" | "arm64" => "arm64",
+        other => other,
+    };
+    format!("{system}-{arch}")
 }
