@@ -7,6 +7,13 @@ use super::{
     SessionPersistListener, Write,
 };
 
+#[derive(Clone, Copy)]
+pub(crate) enum EntryDurability {
+    Buffered,
+    Durable,
+    OwnershipTransition,
+}
+
 impl SessionManager {
     pub(super) fn refresh_has_assistant_entry(&mut self, entries: &[FileEntry]) {
         self.has_assistant_entry = entries.iter().any(|entry| {
@@ -114,6 +121,14 @@ impl SessionManager {
         Ok(())
     }
     pub(super) fn persist_entry(&mut self, index: usize) -> std::io::Result<()> {
+        self.persist_entry_with_durability(index, EntryDurability::Buffered)
+    }
+
+    pub(super) fn persist_entry_with_durability(
+        &mut self,
+        index: usize,
+        durability: EntryDurability,
+    ) -> std::io::Result<()> {
         if !self.persist || self.session_file.is_none() {
             return Ok(());
         }
@@ -121,7 +136,10 @@ impl SessionManager {
             self.file_entries[index],
             FileEntry::SessionState { .. } | FileEntry::SessionInfo { .. }
         );
-        if !self.has_assistant_entry && !is_session_state_or_info {
+        if matches!(durability, EntryDurability::Buffered)
+            && !self.has_assistant_entry
+            && !is_session_state_or_info
+        {
             self.flushed = false;
             return Ok(());
         }
@@ -136,7 +154,17 @@ impl SessionManager {
             if let Some(session_file) = &self.session_file {
                 let mut line = entry.into_bytes();
                 line.push(b'\n');
-                super::window::append_cached(session_file, &line, self.append_ownership)?;
+                match durability {
+                    EntryDurability::OwnershipTransition => {
+                        super::super::window_cache::append_ownership_transition(
+                            session_file,
+                            &line,
+                        )?;
+                    }
+                    EntryDurability::Buffered | EntryDurability::Durable => {
+                        super::window::append_cached(session_file, &line, self.append_ownership)?;
+                    }
+                }
             }
             self.notify_persist_listeners();
         }

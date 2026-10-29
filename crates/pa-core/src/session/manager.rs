@@ -19,6 +19,7 @@ mod tests;
 mod append;
 
 mod persist;
+pub(crate) use persist::EntryDurability;
 
 mod queries;
 use super::{build_session_context, SessionContext};

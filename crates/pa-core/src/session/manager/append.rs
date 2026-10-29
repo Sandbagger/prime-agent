@@ -8,6 +8,14 @@ use super::{
 
 impl SessionManager {
     pub(crate) fn append_entry(&mut self, entry: FileEntry) -> std::io::Result<()> {
+        self.append_entry_with_durability(entry, super::persist::EntryDurability::Buffered)
+    }
+
+    fn append_entry_with_durability(
+        &mut self,
+        entry: FileEntry,
+        durability: super::persist::EntryDurability,
+    ) -> std::io::Result<()> {
         let was_assistant = self.has_assistant_entry;
         let was_flushed = self.flushed;
         if matches!(
@@ -21,7 +29,7 @@ impl SessionManager {
         }
         self.file_entries.push(entry);
         let index = self.file_entries.len() - 1;
-        if let Err(error) = self.persist_entry(index) {
+        if let Err(error) = self.persist_entry_with_durability(index, durability) {
             self.file_entries.pop();
             self.has_assistant_entry = was_assistant;
             self.flushed = was_flushed;
@@ -178,6 +186,29 @@ impl SessionManager {
             base,
         })?;
         Ok(id)
+    }
+
+    /// Append a custom state row before adopting its index/window entry.
+    /// `OwnershipTransition` uses a private-file commit, so failure cannot expose
+    /// rejected bytes. Durable retains the ordinary append's I/O semantics.
+    pub(crate) fn append_custom_entry_durable(
+        &mut self,
+        custom_type: &str,
+        data: Option<serde_json::Value>,
+        durability: super::persist::EntryDurability,
+    ) -> std::io::Result<()> {
+        let base = self.next_base();
+        self.append_entry_with_durability(
+            FileEntry::Custom {
+                payload: pa_types::session::CustomEntry {
+                    custom_type: custom_type.to_string(),
+                    data,
+                    rest: serde_json::Map::default(),
+                },
+                base,
+            },
+            durability,
+        )
     }
 
     /// Append a custom entry with the TS `_appendEntry` retained-write

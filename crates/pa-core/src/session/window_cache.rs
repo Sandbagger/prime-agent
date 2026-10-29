@@ -190,6 +190,44 @@ fn file_tail_is_newline(path: &Path) -> io::Result<bool> {
     Ok(tail[0] == b'\n')
 }
 
+/// Commit a rare ownership transition without exposing rejected bytes.
+/// The caller must retain exclusive session-writer ownership through copy/rename,
+/// as for full-session rewrites (daemon lease or an exclusively owned manager).
+/// The cache certification marker is not proof of that runtime ownership.
+pub(super) fn append_ownership_transition(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    append_ownership_transition_with_sync(path, bytes, crate::platform::fsync)
+}
+
+fn append_ownership_transition_with_sync(
+    path: &Path,
+    bytes: &[u8],
+    sync: impl FnOnce(&File) -> io::Result<()>,
+) -> io::Result<()> {
+    let temp = path.with_extension(format!("goal-state-{}.tmp", uuid::Uuid::new_v4()));
+    let result = (|| {
+        let mut source = File::open(path)?;
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        crate::platform::set_private_mode(&mut options);
+        let mut target = options.open(&temp)?;
+        let len = std::io::copy(&mut source, &mut target)?;
+        if len > 0 && !file_tail_is_newline(path)? {
+            target.write_all(b"\n")?;
+        }
+        target.write_all(bytes)?;
+        target.flush()?;
+        sync(&target)?;
+        // Successful rename is the commit point; nothing fallible follows it.
+        crate::platform::rename_onto(&temp, path)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    } else if let Ok(mut snapshots) = live_snapshots().lock() {
+        snapshots.remove(path);
+    }
+    result
+}
+
 /// Append authoritative JSONL bytes. Only a caller holding the existing session
 /// lease may incrementally certify the cache. Rows must have fresh writer IDs.
 /// Cache failures never fail a successful durable append.
@@ -269,5 +307,37 @@ pub(super) mod float_bits {
     }
     pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f64, D::Error> {
         u64::deserialize(deserializer).map(f64::from_bits)
+    }
+}
+
+#[cfg(test)]
+mod ownership_transition_tests {
+    use super::*;
+
+    #[test]
+    fn ownership_transition_sync_failure_preserves_canonical_bytes() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("session.jsonl");
+        let original = br#"{"status":"active"}
+"#;
+        std::fs::write(&path, original).unwrap();
+        let error = append_ownership_transition_with_sync(
+            &path,
+            br#"{"status":"paused"}
+"#,
+            |file| {
+                assert!(file.metadata()?.len() > original.len() as u64);
+                Err(io::Error::other("injected post-write sync failure"))
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.to_string(), "injected post-write sync failure");
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        append_ownership_transition(&path, b"retry\n").unwrap();
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            [original.as_slice(), b"retry\n"].concat()
+        );
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
     }
 }
