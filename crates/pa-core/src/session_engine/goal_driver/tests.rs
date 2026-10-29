@@ -1421,7 +1421,7 @@ fn operator_wait_validates_reason_and_rejects_nonpending_goals() {
     assert!(driver.wait(&mut session, "approval").is_err());
     driver.start(&mut session, "ship it", None).unwrap();
     let active = driver.state().clone();
-    for reason in ["".to_string(), "  ".to_string(), "x".repeat(2001)] {
+    for reason in [String::new(), "  ".to_string(), "x".repeat(2001)] {
         assert!(driver.wait(&mut session, &reason).is_err());
         assert_eq!(driver.state(), &active);
     }
@@ -1507,8 +1507,10 @@ async fn operator_wait_windowed_transition_retains_history_and_reloads() {
     ];
     let original = rows
         .iter()
-        .map(|row| format!("{row}\n"))
-        .collect::<String>();
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
     std::fs::write(&path, &original).unwrap();
     // This test owns the private file exclusively for the full operation.
     let mut session = SessionManager::open_windowed(dir.path(), dir.path(), &path)
