@@ -93,6 +93,16 @@ pub fn handle_goal_host_request(
             let goal = create_goal_from_host(driver, session, objective, token_budget)?;
             Ok(goal_host_response(&goal, false))
         }
+        "goal.wait" => {
+            let Some(reason) = record.get("reason").and_then(Value::as_str) else {
+                anyhow::bail!("goal.wait reason must be a string");
+            };
+            driver.wait(session, reason)?;
+            Ok(goal_host_response(
+                &driver.state_with_creation_elapsed(),
+                false,
+            ))
+        }
         "goal.complete" => {
             let goal = complete_goal_from_host(driver, session)?;
             Ok(goal_host_response(&goal, true))
@@ -365,6 +375,27 @@ mod tests {
     fn heartbeat_store() -> AgentCronJobStore {
         let dir = tempfile::TempDir::new().unwrap();
         AgentCronJobStore::new(dir.path().join("jobs.json"))
+    }
+
+    #[test]
+    fn goal_wait_host_request_validates_and_returns_paused_goal() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut session = SessionManager::in_memory(dir.path());
+        session.materialize_session_file(Some(dir.path().join("session")));
+        let mut driver = GoalDriver::new();
+        driver.start(&mut session, "ship it", None).unwrap();
+        let error = handle_goal_host_request("goal.wait", &json!({}), &mut driver, &mut session)
+            .unwrap_err();
+        assert_eq!(error.to_string(), "goal.wait reason must be a string");
+        let response = handle_goal_host_request(
+            "goal.wait",
+            &json!({"reason": "approval"}),
+            &mut driver,
+            &mut session,
+        )
+        .unwrap();
+        assert_eq!(response.goal.unwrap().status, GoalStatus::Paused);
+        assert!(response.completion_budget_report.is_none());
     }
 
     #[test]

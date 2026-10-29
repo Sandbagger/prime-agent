@@ -2,8 +2,7 @@
 //! resume, compaction triggers, and the wait-for-settled arms.
 use super::{
     json, queue_lanes, response_failure, response_success, session_snapshot, AgentSessionEngine,
-    DaemonResponse, QueueCheckpoint, QueuePriority, QueuedItem, SessionFile, TurnPolicy, Value,
-    Worker, SIDE_QUESTION_SETTLE_TIMEOUT,
+    DaemonResponse, SessionFile, Value, Worker, SIDE_QUESTION_SETTLE_TIMEOUT,
 };
 
 impl Worker {
@@ -396,53 +395,12 @@ impl Worker {
                         None
                     });
                     if let Some(continuation) = continuation {
-                        // The state change is durable before the announcement: the mint runs
-                        // outside a turn, so the store write rides here, not the emit closure.
-                        if let Some(goal) = continuation.goal_update {
-                            {
-                                let mut core = self.core.lock().unwrap();
-                                if let Some(store) = core.store.as_mut() {
-                                    let _ = store.persist_entry(
-                                        "custom",
-                                        json!({
-                                            "customType": pa_core::goals::GOAL_STATE_CUSTOM_TYPE,
-                                            "data": goal,
-                                        }),
-                                    );
-                                }
-                            }
-                            self.emit_worker_event(json!({
-                                "type": "goal_update",
-                                "goal": goal,
-                            }));
-                        }
-                        {
-                            let mut core = self.core.lock().unwrap();
-                            core.follow_up.push_back(QueuedItem {
-                                priority: QueuePriority::Background,
-                                preview: None,
-                                message: continuation.request.message,
-                                custom_message: continuation.request.custom_message,
-                                agent_message: None,
-                                queue_key: None,
-                                admission_id: None,
-                                images: continuation.request.images,
-                                done: None,
-                                queue_visible: false,
-                                policy: TurnPolicy::Injected,
-                                forced_batch: false,
-                            });
-                        }
-                        // The admission checkpoint: the continuation is admitted while the
-                        // session is idle, so without this record a kill before the turn's
-                        // settle would park it on a plain boot.
-                        self.checkpoint_queue(QueueCheckpoint::Admitted {
-                            operation: "follow_up_queued",
-                        });
-                        // The item's OWN handle releases at the
-                        // admission, never the mutable mirror.
-                        AgentSessionEngine::release_goal_continuation_handle(
-                            continuation.pending_handle.as_ref(),
+                        crate::worker::admit_post_compaction_goal(
+                            &self.recovery,
+                            &self.core,
+                            &self.events,
+                            &self.work_notify,
+                            continuation,
                         );
                     }
                 }

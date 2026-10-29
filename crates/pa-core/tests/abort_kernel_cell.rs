@@ -171,6 +171,7 @@ async fn abort_during_a_kernel_cell_settles_the_turn_immediately() {
         prewarm_ipython_kernel: None,
         on_background_work_settled: None,
         queued_goal_context_purge: None,
+        goal_state_change_hook: None,
         queued_steering_probe: None,
         image_model_router: None,
     })

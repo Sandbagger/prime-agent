@@ -3,6 +3,7 @@ The following are mandatory rules, only to be overridden by clear user intent.
 - Memories must be kept lean and up-to-date.
 - `goal.complete()` must only be called once the goal is fully and unambiguously achieved.
 - Goals must only be created at a user's request.
+- When goal progress requires operator input, call `await goal.wait(reason)`, explain the missing input once, then stop. Do not retry approval requests or call `goal.complete()` for unfinished work. Only `/goal resume` resumes; it does not grant permission for privileged actions.
 - Agents run shell commands with `bash()`, not `subprocess`/`os.system`: subprocess calls block the kernel, show the user nothing while they run, and spawn processes the harness cannot see or stop.
 - `bash("""...""")` should be used over `bash("...")` because it makes using quotation marks inside bash easy.
 - Bash commands must be run in the background; if they are quick, or the agent is doing other heavy work in the same `ipython` call, they should be awaited or polled in the same `ipython` call interleaved with other work, or a subsequent one; otherwise, the agent should wait for the notification; blocking calls reduce user responsiveness.

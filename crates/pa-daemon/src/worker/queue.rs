@@ -238,9 +238,17 @@ pub(crate) fn checkpoint_queue_recovery(
     core_lock: &std::sync::Mutex<SessionCore>,
     checkpoint: QueueCheckpoint,
 ) {
+    let _ = checkpoint_queue_recovery_checked(recovery, core_lock, checkpoint);
+}
+
+pub(crate) fn checkpoint_queue_recovery_checked(
+    recovery: &std::sync::Mutex<Option<WorkerRecoveryJournal>>,
+    core_lock: &std::sync::Mutex<SessionCore>,
+    checkpoint: QueueCheckpoint,
+) -> anyhow::Result<()> {
     let mut guard = recovery.lock().unwrap();
     let Some(journal) = guard.as_mut() else {
-        return;
+        return Ok(());
     };
     // The lanes are read under the recovery lock (a microsecond core hold —
     // never across the journal's fsyncs): no persist interleaves this read.
@@ -271,7 +279,7 @@ pub(crate) fn checkpoint_queue_recovery(
     };
     // The verdict never publishes over a snapshot that did not
     // persist: the pair rides ONE durable append.
-    let _ = journal.record_queue_checkpoint(
+    journal.record_queue_checkpoint(
         &active_session_id,
         &session_id,
         session_file.as_deref(),
@@ -279,7 +287,7 @@ pub(crate) fn checkpoint_queue_recovery(
         operation,
         &lanes.steering,
         &lanes.follow_up,
-    );
+    )
 }
 
 pub(crate) fn queue_lanes(core: &SessionCore) -> QueueLanes {
@@ -306,6 +314,7 @@ pub(crate) fn queue_lanes(core: &SessionCore) -> QueueLanes {
 /// the forced steering batch — the same-class prefix behind it joins as
 /// co-delivered rows of ONE turn. A non-batchable front delivers solo.
 pub(crate) fn gather_delivery_batch(core: &mut SessionCore, lane: Lane) -> Vec<QueuedItem> {
+    crate::goal_queue::retain_current(core);
     let (items, mode) = match lane {
         Lane::Steering => (&mut core.steering, core.steering_mode.as_str()),
         Lane::FollowUp => (&mut core.follow_up, core.follow_up_mode.as_str()),
@@ -433,6 +442,24 @@ pub(crate) fn admit_autonomous_follow_up(
     work_notify.notify_waiters();
 }
 
+pub(crate) fn admit_post_compaction_goal(
+    recovery: &std::sync::Mutex<Option<WorkerRecoveryJournal>>,
+    core: &Arc<Mutex<SessionCore>>,
+    events: &Arc<EventPump>,
+    work_notify: &Arc<Notify>,
+    continuation: crate::engine::GoalContinuation,
+) {
+    let pending = continuation.pending_handle.clone();
+    admit_goal_follow_up(
+        recovery,
+        core,
+        events,
+        work_notify,
+        crate::engine::GoalTurnEndWork::Continuation(continuation),
+    );
+    crate::agent_engine::AgentSessionEngine::release_goal_continuation_handle(pending.as_ref());
+}
+
 pub(crate) fn admit_goal_follow_up(
     recovery: &std::sync::Mutex<Option<WorkerRecoveryJournal>>,
     core: &Arc<Mutex<SessionCore>>,
@@ -444,30 +471,30 @@ pub(crate) fn admit_goal_follow_up(
         crate::engine::GoalTurnEndWork::BudgetLimitSteer(follow_up) => (Lane::Steering, follow_up),
         crate::engine::GoalTurnEndWork::Continuation(follow_up) => (Lane::FollowUp, follow_up),
     };
-    if let Some(goal) = &follow_up.goal_update {
+    {
+        let mut guard = core.lock().unwrap();
+        if follow_up
+            .queue_key
+            .as_deref()
+            .is_some_and(|key| !crate::goal_queue::is_current(key, guard.goal_queue_state.as_ref()))
         {
-            let mut guard = core.lock().unwrap();
+            return;
+        }
+        if let Some(goal) = &follow_up.goal_update {
             if let Some(store) = guard.store.as_mut() {
                 let _ = store.persist_entry(
                     "custom",
-                    json!({
-                        "customType": pa_core::goals::GOAL_STATE_CUSTOM_TYPE,
-                        "data": goal,
-                    }),
+                    json!({ "customType": pa_core::goals::GOAL_STATE_CUSTOM_TYPE, "data": goal }),
                 );
             }
         }
-        emit_worker_event_with(core, events, json!({ "type": "goal_update", "goal": goal }));
-    }
-    {
-        let mut core = core.lock().unwrap();
         let item = QueuedItem {
             priority: QueuePriority::Background,
             preview: None,
             message: follow_up.request.message,
             custom_message: follow_up.request.custom_message,
             agent_message: None,
-            queue_key: None,
+            queue_key: follow_up.queue_key,
             admission_id: None,
             images: follow_up.request.images,
             done: None,
@@ -476,9 +503,12 @@ pub(crate) fn admit_goal_follow_up(
             forced_batch: false,
         };
         match lane {
-            Lane::Steering => enqueue_priority(&mut core.steering, item),
-            Lane::FollowUp => enqueue_priority(&mut core.follow_up, item),
+            Lane::Steering => enqueue_priority(&mut guard.steering, item),
+            Lane::FollowUp => enqueue_priority(&mut guard.follow_up, item),
         }
+    }
+    if let Some(goal) = &follow_up.goal_update {
+        emit_worker_event_with(core, events, json!({ "type": "goal_update", "goal": goal }));
     }
     // The admission checkpoint: same idle-admission gap as the
     // autonomous continuation above.

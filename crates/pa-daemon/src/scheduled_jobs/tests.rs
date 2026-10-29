@@ -441,3 +441,74 @@ async fn rlm_heartbeat_mutation_hook_fires_into_the_session_queue() {
     assert_eq!(details["status"], "active");
     assert_eq!(details["runCount"], 0);
 }
+
+#[tokio::test]
+async fn goal_backoff_fire_withdrawal_skips_and_rejects_snapshotted_fire() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let session = write_active_session(dir.path());
+    let active = pa_core::goals::GoalState {
+        active: true,
+        status: pa_core::goals::GoalStatus::Active,
+        goal_id: Some("owned".to_string()),
+        continuation_epoch: Some("before-wait".to_string()),
+        ..pa_core::goals::GoalState::default()
+    };
+    let key = crate::goal_queue::provenance_key(&active).unwrap();
+    let core = Arc::new(Mutex::new(crate::worker::SessionCore::test_core(
+        None,
+        dir.path().to_string_lossy().to_string(),
+    )));
+    crate::goal_queue::synchronize(&mut core.lock().unwrap(), Some(active.clone()));
+    let notify = Arc::new(Notify::new());
+    let hooks = Arc::new(QueueHooks {
+        core: core.clone(),
+        work_notify: notify.clone(),
+        user_bash: Arc::new(crate::user_bash::UserBash::new()),
+        store: Arc::new(AgentCronJobStore::for_session_artifacts()),
+        recovery: Arc::new(Mutex::new(None)),
+    });
+    let job = AgentCronJob {
+        source: Some(key.clone()),
+        label: Some(pa_core::session_engine::goal_driver::GOAL_BACKOFF_WAKE_CRON_LABEL.to_string()),
+        ..heartbeat_job("goal-backoff", "marker", DeliveryMode::FollowUp, &session)
+    };
+    let run = {
+        let hooks = hooks.clone();
+        let job = job.clone();
+        tokio::spawn(async move { hooks.run_job(&job).await })
+    };
+    // run_job notifies after admission, before waiting for its queued fire to settle.
+    notify.notified().await;
+    {
+        let mut core = core.lock().unwrap();
+        assert_eq!(
+            core.follow_up.front().unwrap().queue_key.as_ref(),
+            Some(&key)
+        );
+        crate::goal_queue::synchronize(
+            &mut core,
+            Some(pa_core::goals::GoalState {
+                active: false,
+                status: pa_core::goals::GoalStatus::Paused,
+                continuation_epoch: Some("wait".to_string()),
+                ..active
+            }),
+        );
+        assert!(core.follow_up.is_empty());
+    }
+    assert_eq!(run.await.unwrap().unwrap(), Some("skipped"));
+    // Scheduler retained an Active snapshot before withdrawal; it cannot re-admit it.
+    assert_eq!(hooks.run_job(&job).await.unwrap(), Some("skipped"));
+    let legacy = AgentCronJob {
+        source: Some("goal_backoff_wake".to_string()),
+        ..job.clone()
+    };
+    assert_eq!(
+        tokio::time::timeout(std::time::Duration::from_secs(2), hooks.run_job(&legacy))
+            .await
+            .expect("stale legacy fire must skip without queueing")
+            .unwrap(),
+        Some("skipped")
+    );
+    assert!(core.lock().unwrap().follow_up.is_empty());
+}

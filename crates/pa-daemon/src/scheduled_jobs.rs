@@ -107,7 +107,33 @@ impl AgentCronSchedulerHooks for QueueHooks {
         }
         let (done_tx, done_rx) = oneshot::channel();
         let heartbeat = is_heartbeat_cron_job(job);
-        let queue_key = heartbeat.then(|| format!("heartbeat:{}", job.id));
+        let legacy_goal = job.source.as_deref() == Some("goal_backoff_wake")
+            && job.label.as_deref()
+                == Some(pa_core::session_engine::goal_driver::GOAL_BACKOFF_WAKE_CRON_LABEL);
+        let legacy_key = if legacy_goal {
+            let core = self.core.lock().unwrap();
+            let Some(state) = core.goal_queue_state.as_ref().filter(|state| {
+                state.status == pa_core::goals::GoalStatus::Active
+                    && state.continuation_epoch.is_none()
+            }) else {
+                return Ok(Some("skipped"));
+            };
+            crate::goal_queue::provenance_key(state)
+        } else {
+            None
+        };
+        let goal_key = job
+            .source
+            .as_deref()
+            .filter(|source| {
+                crate::goal_queue::is_goal_key(source)
+                    && job.label.as_deref()
+                        == Some(pa_core::session_engine::goal_driver::GOAL_BACKOFF_WAKE_CRON_LABEL)
+            })
+            .or(legacy_key.as_deref());
+        let queue_key = goal_key
+            .map(str::to_string)
+            .or_else(|| heartbeat.then(|| format!("heartbeat:{}", job.id)));
         // A heartbeat rides its delivery-mode lane; a plain cron job queues on the follow-up lane.
         let rides_steering =
             heartbeat && !matches!(job.delivery_mode, Some(DeliveryMode::FollowUp));
@@ -117,6 +143,11 @@ impl AgentCronSchedulerHooks for QueueHooks {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             if !core.created || core.shutdown_requested || job.status != JobStatus::Active {
+                return Ok(Some("skipped"));
+            }
+            if goal_key.is_some_and(|key| {
+                !crate::goal_queue::is_current(key, core.goal_queue_state.as_ref())
+            }) {
                 return Ok(Some("skipped"));
             }
             // TS cron fires resume the suspension before admission (`resumeIfIdle: true`): a

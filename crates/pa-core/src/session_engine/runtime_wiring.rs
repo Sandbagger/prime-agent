@@ -97,7 +97,9 @@ pub fn wire_session_runtime(
     agent_dir: &std::path::Path,
     rlm: RlmWiring,
     goal_complete_purge: Option<QueuedGoalContextPurge>,
+    goal_state_change_hook: Option<super::runtime::GoalStateChangeHook>,
     cron_store: Option<KernelCronWiring>,
+    telemetry: Option<&super::telemetry::TelemetryWiring>,
 ) -> SessionKernelWiring {
     // The embedding's durable session identity overrides the in-memory manager's
     // when supplied: kernel-created rlm heartbeats must bind the live session id the
@@ -144,13 +146,19 @@ pub fn wire_session_runtime(
     if let Some(purge) = goal_complete_purge {
         runtime.set_goal_complete_purge(purge);
     }
+    if let Some(hook) = goal_state_change_hook {
+        runtime.set_goal_state_change_hook(hook);
+    }
     if let Some(hook) = mutation_hook {
         runtime.set_cron_mutation_hook(hook);
+    }
+    if let Some(telemetry) = telemetry {
+        runtime.set_goal_wait_telemetry(telemetry);
     }
     let runtime = Arc::new(runtime);
     let session = Arc::new(tokio::sync::Mutex::new(session));
     let mut handlers = HostRequestHandlers::default();
-    runtime.register_host_handlers(session.clone(), &mut handlers);
+    runtime.register_host_handlers(&session, &mut handlers);
     let model_registry = rlm.model_registry.unwrap_or_else(|| {
         let auth = crate::auth::AuthStorage::create(agent_dir);
         let mut registry =

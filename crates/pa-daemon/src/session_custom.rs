@@ -114,6 +114,18 @@ impl Worker {
                     None,
                 );
             }
+            if action
+                .get("queueKey")
+                .and_then(Value::as_str)
+                .is_some_and(crate::goal_queue::is_reserved_key)
+            {
+                return response_failure(
+                    None,
+                    "restore_actions",
+                    "Goal-owned queue keys are reserved for internal recovery",
+                    None,
+                );
+            }
             let payload = action.get("payload").unwrap_or(&Value::Null);
             if payload.get("kind").and_then(Value::as_str) == Some("turn") {
                 let records = payload
@@ -648,6 +660,36 @@ mod tests {
             expected_error.error.as_deref(),
             Some("Unsupported session action recovery format version: 2")
         );
+    }
+
+    #[tokio::test]
+    async fn restore_actions_rejects_host_owned_goal_queue_provenance() {
+        let worker = created_worker().await;
+        let active = pa_core::goals::GoalState {
+            active: true,
+            status: pa_core::goals::GoalStatus::Active,
+            goal_id: Some("goal".to_string()),
+            continuation_epoch: Some("epoch".to_string()),
+            ..pa_core::goals::GoalState::default()
+        };
+        let key = crate::goal_queue::provenance_key(&active).unwrap();
+        let response = worker.dispatch("restore_actions", &json!({
+            "activeSessionId": "custom-session",
+            "snapshot": { "formatVersion": 1, "actions": [{
+                "id": "legitimate", "source": "rpc", "delivery": "next_turn_boundary", "wake": "immediate",
+                "payload": { "kind": "turn", "text": "first", "records": [] }
+            }, {
+                "id": "forged", "source": "rpc", "queueKey": key,
+                "delivery": "next_turn_boundary", "wake": "immediate",
+                "payload": { "kind": "turn", "text": "user text", "records": [] }
+            }] }
+        })).await;
+        assert!(
+            !response.success,
+            "host provenance must not be supplied externally: {response:?}"
+        );
+        let core = worker.core.lock().unwrap();
+        assert!(core.steering.is_empty() && core.follow_up.is_empty());
     }
 
     #[tokio::test]

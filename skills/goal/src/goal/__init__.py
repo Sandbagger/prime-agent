@@ -1,6 +1,6 @@
 """Prime Agent goal skill: manage the persistent thread goal from the kernel.
 
-All goal state lives in the TypeScript host; these functions are thin typed
+All goal state lives in the host; these functions are thin typed
 wrappers over the generic host bridge (`rlm.host_request`). They only work
 inside the Prime Agent Python kernel.
 """
@@ -41,12 +41,24 @@ async def create(objective: str, token_budget: int | None = None) -> dict[str, A
     return await host_request("goal.create", payload)
 
 
+async def wait(reason: str) -> dict[str, Any]:
+    """Pause goal continuation until the operator explicitly runs /goal resume.
+
+    Give the missing input once in your final response, then stop. The trimmed
+    reason must contain 1–2000 Unicode characters. An existing pause is kept.
+    This does not abort the current tool batch or suspend independent inputs.
+    """
+    if not isinstance(reason, str):
+        raise TypeError(f"reason must be str, got {type(reason).__name__}")
+    return await host_request("goal.wait", {"reason": reason})
+
+
 async def complete() -> dict[str, Any]:
     """Mark the existing thread goal achieved.
 
     Use only when the objective has actually been achieved and no required
     work remains — not because the budget is nearly exhausted or because you
-    are stopping work. Pause, resume, and budget-limit transitions are
-    controlled by the user and the host.
+    are stopping work. Use wait(reason) for missing operator input; resume
+    and budget-limit transitions remain controlled by the user and the host.
     """
     return await host_request("goal.complete")

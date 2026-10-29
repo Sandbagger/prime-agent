@@ -231,6 +231,7 @@ impl GoalDriver {
             active: true,
             status: GoalStatus::Active,
             goal_id: Some(uuid::Uuid::new_v4().to_string()),
+            continuation_epoch: None,
             objective: Some(objective),
             token_budget: budget,
             tokens_used: 0,
@@ -289,7 +290,16 @@ impl GoalDriver {
 
     fn set_state(&mut self, session: &mut SessionManager, next: GoalState) -> anyhow::Result<()> {
         let now = now_millis();
+        let ownership_changed =
+            next.goal_id != self.state.goal_id || next.status != self.state.status;
         let normalized = normalize_goal_state(GoalState {
+            continuation_epoch: if ownership_changed {
+                next.goal_id
+                    .as_ref()
+                    .map(|_| uuid::Uuid::new_v4().to_string())
+            } else {
+                next.continuation_epoch.clone()
+            },
             updated_at: Some(now),
             ..next
         });
@@ -303,8 +313,12 @@ impl GoalDriver {
             None => normalized,
         };
         let value = serde_json::to_value(&normalized)?;
-        session.append_custom_entry(GOAL_STATE_CUSTOM_TYPE, Some(value))?;
-        session.flush_now()?;
+        let durability = if ownership_changed {
+            crate::session::manager::EntryDurability::OwnershipTransition
+        } else {
+            crate::session::manager::EntryDurability::Durable
+        };
+        session.append_custom_entry_durable(GOAL_STATE_CUSTOM_TYPE, Some(value), durability)?;
         // A goal leaving the active state drops its pending mint: a continuation
         // owed to a dead goal never wedges the next one's mint.
         if normalized.status != GoalStatus::Active {
@@ -390,6 +404,30 @@ impl GoalDriver {
         self.owed_continuation_for_rlm_work = false;
         self.continuation_consumed();
         Ok(())
+    }
+
+    /// Park an active goal for operator input, preserving an existing pause.
+    ///
+    /// # Errors
+    ///
+    /// Rejects empty/overlong reasons and nonpending goals, or failed persistence.
+    pub fn wait(&mut self, session: &mut SessionManager, reason: &str) -> anyhow::Result<()> {
+        // A short display explanation, never an authorization discriminator.
+        const MAX_WAIT_REASON_CHARS: usize = 2000;
+        let reason = reason.trim();
+        anyhow::ensure!(!reason.is_empty(), "goal.wait reason must not be empty");
+        anyhow::ensure!(
+            reason.chars().count() <= MAX_WAIT_REASON_CHARS,
+            "goal.wait reason must be at most {MAX_WAIT_REASON_CHARS} characters"
+        );
+        match self.state.status {
+            GoalStatus::Paused => Ok(()),
+            GoalStatus::Active => self.pause(session, &format!("Waiting for operator: {reason}")),
+            GoalStatus::Idle
+            | GoalStatus::BudgetLimited
+            | GoalStatus::Complete
+            | GoalStatus::Error => anyhow::bail!("goal.wait requires an active or paused goal"),
+        }
     }
 
     /// Resume a paused/budget-limited goal. Returns the continuation context

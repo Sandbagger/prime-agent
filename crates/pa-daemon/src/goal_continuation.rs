@@ -198,6 +198,7 @@ impl AgentSessionEngine {
             }
             return;
         }
+        let queue_key = crate::goal_queue::provenance_key(&driver.state_with_creation_elapsed());
         let goal_update = self.publish_goal_state(&driver.state_with_creation_elapsed());
         drop(driver);
         // A close that lands while the awaits above ran: the mint is
@@ -212,6 +213,7 @@ impl AgentSessionEngine {
             request: goal_prompt_request(&message),
             goal_update,
             pending_handle,
+            queue_key,
         }));
     }
 
@@ -363,6 +365,8 @@ impl AgentSessionEngine {
                 }
                 return GoalBoundary::End;
             }
+            let queue_key =
+                crate::goal_queue::provenance_key(&driver.state_with_creation_elapsed());
             let goal_update = self.publish_goal_state(&driver.state_with_creation_elapsed());
             let message = message.expect("the mint produced a message");
             drop(driver);
@@ -370,6 +374,7 @@ impl AgentSessionEngine {
                 request: goal_prompt_request(&message),
                 goal_update,
                 pending_handle,
+                queue_key,
             }));
             GoalBoundary::End
         })
@@ -398,12 +403,15 @@ impl AgentSessionEngine {
                 pa_core::goals::GoalContextKind::BudgetLimit,
             )
             .ok()
+            .map(|message| (message, crate::goal_queue::provenance_key(&state)))
         })?;
+        let (message, queue_key) = message;
         Some(GoalTurnEndWork::BudgetLimitSteer(GoalContinuation {
             request: goal_prompt_request(&message),
             goal_update: None,
             // The budget steer mints no continuation slot: no pending guard.
             pending_handle: None,
+            queue_key,
         }))
     }
 

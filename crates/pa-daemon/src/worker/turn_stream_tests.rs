@@ -25,6 +25,7 @@ fn burst_runner(engine: Arc<dyn SessionEngine>) -> TurnRunner {
         cwd: String::new(),
         steering: VecDeque::new(),
         follow_up: VecDeque::new(),
+        goal_queue_state: None,
         busy: false,
         created: false,
         attached_client_ids: Vec::new(),

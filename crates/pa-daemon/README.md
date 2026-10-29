@@ -254,6 +254,30 @@ broadcast owns its surface here too (the worker's cron-store
 to every client, so any heartbeat mutation anywhere in the daemon reaches
 attached UIs daemon-wide).
 
+### Goal-owned queue withdrawal
+
+Goal continuations and backoff fires carry an internal goal ID, continuation epoch,
+and restricted purpose in their queue key. Admission and pickup validate canonical
+ownership; recovery preserves current-epoch work and withdraws old epochs. External
+`restore_actions` cannot supply the reserved goal-key namespace. This is a queue
+integrity boundary, not privileged authorization.
+
+The awaited ownership hook uses driver → worker admission lock order. It prunes
+resident stale work before writing the canonical session row and recovery snapshot.
+Successful wait means both writes completed. An append failure leaves the resident
+worker paused but reports durability uncertainty: restart may restore the old Active
+state. Inspect and retry wait to finish synchronization; even an already-paused retry
+writes again. A checkpoint failure also reports error, never successful wait. Neither
+case grants approval or automatically retries privileged work. A turn picked up before
+the ownership hook linearizes is already executing and cannot be retracted.
+
+Legacy scheduler snapshots identified by exact `goal_backoff_wake` source are accepted
+only for a legacy Active goal with no epoch, then stamped before queueing. Ownership
+transitions rotate the epoch. Historical parked plain prompts without provenance
+cannot be distinguished from user input; drain/reconcile existing goal wakes before
+upgrading. This implementation does not text-match prompts or claim to retract those
+unidentifiable legacy rows. No installed runtime is upgraded by this change.
+
 ## Non-goals
 No agent behavior inside workers beyond hosting a pa-core engine; no UI.
 

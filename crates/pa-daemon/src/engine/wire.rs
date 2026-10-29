@@ -221,6 +221,8 @@ pub struct GoalContinuation {
     /// This mint's own pending-continuation guard handle: releases name
     /// exactly the mint's guard, never the mutable mirror.
     pub pending_handle: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    /// Durable ownership stamp for queue admission and recovery.
+    pub queue_key: Option<String>,
 }
 
 /// The goal-driven work a settled run boundary owes. Each variant

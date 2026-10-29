@@ -70,6 +70,22 @@ impl AgentSessionEngine {
         // replacement arms — repeated boundaries must never stack marker
         // turns.
         self.cancel_goal_backoff_wake();
+        let handles = self
+            .goal_runtime
+            .lock()
+            .expect("goal runtime lock")
+            .clone()?;
+        let state = {
+            let driver = handles.driver.lock().await;
+            if driver.backoff_wake_at() != Some(wake_at_ms) {
+                return None;
+            }
+            driver.state_with_creation_elapsed()
+        };
+        if state.status != pa_core::goals::GoalStatus::Active {
+            return None;
+        }
+        let source = crate::goal_queue::provenance_key(&state)?;
         let wiring = self.cron_wiring()?;
         let binding = self.kernel_cron_binding()?;
         let schedule_text = format!(
@@ -83,7 +99,7 @@ impl AgentSessionEngine {
                 session_id: binding.session_id.clone(),
                 session_file: binding.session_file.clone(),
                 cwd: binding.cwd.clone(),
-                source: Some("goal_backoff_wake".to_string()),
+                source: Some(source),
                 label: Some(
                     pa_core::session_engine::goal_driver::GOAL_BACKOFF_WAKE_CRON_LABEL.to_string(),
                 ),
@@ -133,6 +149,11 @@ impl AgentSessionEngine {
             if job.status != pa_core::cron::JobStatus::Active
                 || job.label.as_deref()
                     != Some(pa_core::session_engine::goal_driver::GOAL_BACKOFF_WAKE_CRON_LABEL)
+                || !(job.source.as_deref() == Some("goal_backoff_wake")
+                    || job
+                        .source
+                        .as_deref()
+                        .is_some_and(crate::goal_queue::is_goal_key))
                 || job.session_id != binding.session_id
             {
                 continue;
@@ -282,5 +303,91 @@ impl AgentSessionEngine {
             }
             self.goal_update_if_changed(emit)
         }
+    }
+}
+
+#[cfg(test)]
+mod queue_hook_tests {
+    use super::*;
+    #[tokio::test]
+    async fn installed_worker_goal_hook_failure_then_retry_preserves_pause() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let worker = crate::worker::Worker::new(
+            crate::worker::WorkerConfig {
+                socket_path: dir.path().join("unused.sock"),
+                supervisor_socket_path: std::path::PathBuf::new(),
+                token: "test".to_string(),
+                worker_instance_id: String::new(),
+                active_session_id: "test".to_string(),
+                agent_dir: dir.path().join("agent"),
+                recovery_journal_path: dir.path().join("recovery.jsonl"),
+                telemetry_disabled: Some(true),
+                script: Some(serde_json::json!({"engine":"faux", "responses":[]})),
+            },
+            None,
+        );
+        let engine = worker.agent_engine.as_ref().unwrap();
+        let mut session = pa_core::session::manager::SessionManager::in_memory(dir.path());
+        let mut driver = pa_core::session_engine::goal_driver::GoalDriver::new();
+        let active = driver.start(&mut session, "test pause", None).unwrap();
+        let key = crate::goal_queue::provenance_key(&active).unwrap();
+        let mut store = crate::session_store::SessionFile::create("/tmp", None, 0);
+        let path = dir.path().join("session.jsonl");
+        store.set_path(path.clone());
+        store.persist_entry("custom", serde_json::json!({"customType":pa_core::goals::GOAL_STATE_CUSTOM_TYPE,"data":active})).unwrap();
+        let blocker = dir.path().join("file");
+        std::fs::write(&blocker, "block").unwrap();
+        store.set_path(blocker.join("session.jsonl"));
+        {
+            let mut core = worker.core.lock().unwrap();
+            core.store = Some(store);
+            crate::goal_queue::synchronize(&mut core, Some(active));
+            core.follow_up.push_back(crate::worker::QueuedItem {
+                message: "old wake".to_string(),
+                priority: crate::worker::QueuePriority::Background,
+                preview: None,
+                custom_message: None,
+                agent_message: None,
+                queue_key: Some(key),
+                admission_id: None,
+                images: Vec::new(),
+                done: None,
+                queue_visible: false,
+                policy: crate::worker::TurnPolicy::Injected,
+                forced_batch: false,
+            });
+        }
+        driver.wait(&mut session, "operator input").unwrap();
+        let paused = driver.state_with_creation_elapsed();
+        *engine.goal_runtime.lock().unwrap() = Some(GoalRuntimeHandles {
+            driver: std::sync::Arc::new(tokio::sync::Mutex::new(driver)),
+            session: std::sync::Arc::new(tokio::sync::Mutex::new(session)),
+        });
+        let hook = engine
+            .goal_state_change_hook
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap();
+        assert!(hook().await.is_err());
+        {
+            let core = worker.core.lock().unwrap();
+            assert_eq!(core.goal_queue_state, Some(paused.clone()));
+            assert!(core.follow_up.is_empty());
+        }
+        worker
+            .core
+            .lock()
+            .unwrap()
+            .store
+            .as_mut()
+            .unwrap()
+            .set_path(path.clone());
+        hook().await.unwrap();
+        let restored = crate::session_store::SessionFile::open(&path).unwrap();
+        assert_eq!(
+            crate::goal_state_persist::goal_state_in_session_file(&restored),
+            Some(paused)
+        );
     }
 }

@@ -57,6 +57,8 @@ pub struct SessionEngineConfig {
     /// Invoked at the goal pause/clear/start command sites and after a
     /// kernel `goal.complete` settles the goal.
     pub queued_goal_context_purge: Option<super::runtime::QueuedGoalContextPurge>,
+    /// Awaited durable ownership synchronization for queued goal work.
+    pub goal_state_change_hook: Option<super::runtime::GoalStateChangeHook>,
     /// `true` while a steering-lane action is queued or mid-selection: the
     /// running turn stops at the next boundary and the queued steer delivers.
     pub queued_steering_probe: Option<std::sync::Arc<dyn Fn() -> bool + Send + Sync>>,
@@ -102,6 +104,8 @@ pub struct SessionEngine {
     /// `/goal` pause/clear/start and the kernel's `goal.complete` withdraw
     /// queued goal-context turns through it; `None` when no queue.
     pub queued_goal_context_purge: Option<super::runtime::QueuedGoalContextPurge>,
+    /// Awaited durable ownership synchronization for queued goal work.
+    pub goal_state_change_hook: Option<super::runtime::GoalStateChangeHook>,
     /// Auth gating and the source the `mcp.*` kernel host handlers resolve
     /// against; `replace_acp_mcp_servers` reaches it through this handle.
     pub mcp_manager: std::sync::Arc<std::sync::Mutex<crate::mcp::McpManager>>,
@@ -230,7 +234,9 @@ pub async fn create_session_with_tool_policy(
             subagent_host: config.rlm_subagent_host.clone(),
         },
         config.queued_goal_context_purge.clone(),
+        config.goal_state_change_hook.clone(),
         config.cron_store.clone(),
+        config.telemetry.as_ref(),
     );
 
     let service_tier_preference = settings.get_default_service_tier();
@@ -789,6 +795,7 @@ pub async fn create_session_with_tool_policy(
         system_prompt,
         goal_driver,
         queued_goal_context_purge: config.queued_goal_context_purge.clone(),
+        goal_state_change_hook: config.goal_state_change_hook.clone(),
         mcp_manager,
         turn_boundary,
         telemetry,

@@ -523,7 +523,9 @@ impl Worker {
             core.cwd = cwd;
             core.steering = steering;
             core.follow_up = follow_up;
+            let goal = crate::goal_state_persist::goal_state_in_session_file(&store);
             core.store = Some(store);
+            crate::goal_queue::synchronize(&mut core, goal);
             if let Some(disclosure) = &interrupted_compaction {
                 if let Some(store) = core.store.as_mut() {
                     let already_disclosed = store.entries().iter().any(|entry| {

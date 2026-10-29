@@ -261,6 +261,7 @@ impl SessionEngine for ScriptedEngine {
             goal_update: Some(goal.state.clone()),
             // The scripted faux mints through no real driver: no guard.
             pending_handle: None,
+            queue_key: None,
         })
     }
 

@@ -1,6 +1,6 @@
 ---
 name: goal
-description: Manage the persistent thread goal from the Python REPL. Use to read goal status and budget usage, to start a goal when the user explicitly asks for one, or to mark the active goal complete once its objective is fully achieved.
+description: Manage the persistent thread goal from the Python REPL. Use to read goal status and budget usage, to start a goal when the user explicitly asks for one, to wait for missing operator input, or to mark the active goal complete once its objective is fully achieved.
 ---
 
 # Goal
@@ -16,6 +16,8 @@ await goal.create("ship the release notes")
 # Only pass token_budget when the user explicitly asks for one:
 # await goal.create("ship the release notes", token_budget=200000)
 await goal.complete()
+# If blocked on operator input instead of finished:
+# await goal.wait("operator approval to deploy")
 ```
 
 ## API
@@ -36,11 +38,23 @@ await goal.complete()
   stopping work. When the result includes a `completion_budget_report`, report
   that final usage to the user.
 
+- `await goal.wait(reason)` — pause automatic goal continuation for missing
+  operator input. The trimmed reason must contain 1–2000 Unicode characters;
+  oversized input is rejected, never truncated. Only active goals can enter
+  wait; a paused goal is unchanged, including a manual pause's reason and time.
+  Other inactive states are rejected. The response uses the normal goal shape.
+  Finish the current response with the missing input once, then stop. Only the
+  operator's `/goal resume` resumes; messages, heartbeat fires and evidence do
+  not resume the goal. Resume never grants authorization for privileged work.
+  This gates future goal-owned turns, not the current tool batch or unrelated
+  autonomous/heartbeat/user inputs. If ownership synchronization fails, the call
+  reports an error and the live goal stays paused. Durable state may not yet
+  reflect the pause; retry wait to finish synchronization before relying on it.
+
 ## Rules
 
-- Goal status transitions other than completion (pause, resume, clear,
-  budget-limiting) are controlled by the user and the host; there is no API for
-  them here.
+- `goal.wait` is the only agent-callable pause. Resume, clear and budget-limit
+  transitions remain controlled by the user and the host.
 - When an active goal is actually complete, call `await goal.complete()`; do
   not merely say it is done — the harness keeps continuing the goal until the
   completion call arrives.

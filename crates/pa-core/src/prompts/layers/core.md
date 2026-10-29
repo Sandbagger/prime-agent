@@ -148,6 +148,7 @@ In goal mode prime-agent helps an agent stay on track until a task is fully fini
 - `goal.create(objective: str, token_budget: int | None = None) -> dict`: create goal and return goal state
 - `goal.get() -> dict`: get goal status (only one goal can be active at a time)
 - `goal.complete() -> dict`: mark goal as completed and get final goal status
+- `goal.wait(reason: str) -> dict`: pause goal continuation for missing operator input; only the operator can resume with `/goal resume`
 
 ## Heartbeat
 

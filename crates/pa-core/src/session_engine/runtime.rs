@@ -24,6 +24,15 @@ use super::host_requests::{
 /// continuation queued while the goal was completing.
 pub type QueuedGoalContextPurge = Arc<dyn Fn() + Send + Sync>;
 
+/// Synchronize durable goal ownership with embedding-owned admission and recovery.
+/// Callers release driver/session locks before awaiting; implementations must read
+/// the latest driver state, not publish a previously captured snapshot.
+pub type GoalStateChangeHook = Arc<
+    dyn Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send>>
+        + Send
+        + Sync,
+>;
+
 /// Session-scoped runtime state the kernel bridge reaches.
 pub struct SessionRuntime {
     goal_driver: Arc<Mutex<GoalDriver>>,
@@ -33,6 +42,11 @@ pub struct SessionRuntime {
     /// Invoked after a kernel `goal.complete` settles the goal; `None`
     /// when the embedding owns no queued goal contexts.
     goal_complete_purge: Option<QueuedGoalContextPurge>,
+    goal_state_change_hook: Option<GoalStateChangeHook>,
+    goal_wait_telemetry: Option<(
+        pa_telemetry::TelemetryClient,
+        Option<super::telemetry::RecordingSwitch>,
+    )>,
     /// Invoked after a kernel `rlm_heartbeat.*` mutation; `None` when
     /// the embedding owns no scheduler to re-arm.
     cron_mutation_hook: Option<RlmHeartbeatMutationHook>,
@@ -52,6 +66,8 @@ impl SessionRuntime {
             active_session_id,
             binding,
             goal_complete_purge: None,
+            goal_state_change_hook: None,
+            goal_wait_telemetry: None,
             cron_mutation_hook: None,
         }
     }
@@ -59,6 +75,19 @@ impl SessionRuntime {
     /// Set the post-completion purge seam (the daemon worker's queue purge).
     pub fn set_goal_complete_purge(&mut self, purge: QueuedGoalContextPurge) {
         self.goal_complete_purge = Some(purge);
+    }
+
+    /// Install awaited ownership synchronization after durable goal mutations.
+    pub fn set_goal_state_change_hook(&mut self, hook: GoalStateChangeHook) {
+        self.goal_state_change_hook = Some(hook);
+    }
+
+    /// Set primitive-only wait adoption telemetry; the client owns background delivery.
+    pub fn set_goal_wait_telemetry(&mut self, telemetry: &super::telemetry::TelemetryWiring) {
+        self.goal_wait_telemetry = Some((
+            telemetry.client.clone(),
+            telemetry.telemetry_enabled.clone(),
+        ));
     }
 
     /// Set the rlm heartbeat mutation hook (queued-fire withdrawal +
@@ -80,7 +109,7 @@ impl SessionRuntime {
     /// Register the `goal.*` and `rlm_heartbeat.*` handlers onto a handler map.
     pub fn register_host_handlers(
         &self,
-        session: Arc<Mutex<SessionManager>>,
+        session: &Arc<Mutex<SessionManager>>,
         handlers: &mut HostRequestHandlers,
     ) {
         let driver = self.goal_driver.clone();
@@ -107,55 +136,48 @@ impl SessionRuntime {
                 })
             }),
         );
-        let driver = self.goal_driver.clone();
-        let goal_session = session.clone();
-        handlers.register(
-            "goal.create",
-            host_handler(move |payload| {
-                let driver = driver.clone();
-                let session = goal_session.clone();
-                Box::pin(async move {
-                    let mut driver = driver.lock().await;
-                    let mut session = session.lock().await;
-                    let response = handle_goal_host_request(
-                        "goal.create",
-                        &payload.data,
-                        &mut driver,
-                        &mut session,
-                    )?;
-                    host_ok(&response)
-                })
-            }),
-        );
-        let driver = self.goal_driver.clone();
-        let goal_session = session;
-        // TS `_completeGoalFromHost` clears the queued goal contexts: a continuation
-        // queued behind the completing turn never runs post-completion.
-        let goal_complete_purge = self.goal_complete_purge.clone();
-        handlers.register(
-            "goal.complete",
-            host_handler(move |payload| {
-                let driver = driver.clone();
-                let session = goal_session.clone();
-                let purge = goal_complete_purge.clone();
-                Box::pin(async move {
-                    let response = {
-                        let mut driver = driver.lock().await;
-                        let mut session = session.lock().await;
-                        handle_goal_host_request(
-                            "goal.complete",
-                            &payload.data,
-                            &mut driver,
-                            &mut session,
-                        )?
-                    };
-                    if let Some(purge) = purge {
-                        purge();
-                    }
-                    host_ok(&response)
-                })
-            }),
-        );
+        for request_type in ["goal.create", "goal.complete", "goal.wait"] {
+            let driver = self.goal_driver.clone();
+            let goal_session = session.clone();
+            let hook = self.goal_state_change_hook.clone();
+            let purge = self.goal_complete_purge.clone();
+            let telemetry = self.goal_wait_telemetry.clone();
+            handlers.register(
+                request_type,
+                host_handler(move |payload| {
+                    let driver = driver.clone();
+                    let session = goal_session.clone();
+                    let hook = hook.clone();
+                    let purge = purge.clone();
+                    let telemetry = telemetry.clone();
+                    Box::pin(async move {
+                        let response = {
+                            let mut driver = driver.lock().await;
+                            let mut session = session.lock().await;
+                            handle_goal_host_request(request_type, &payload.data, &mut driver, &mut session)?
+                        };
+                        // The awaited owner sync replaces legacy completion clearing
+                        // when installed; never purge before a successful durable write.
+                        if let Some(hook) = hook {
+                            if let Err(error) = hook().await {
+                                if request_type == "goal.wait" {
+                                    track_goal_wait(telemetry.as_ref(), "withdrawal_failed");
+                                }
+                                anyhow::bail!("goal state changed in memory, but ownership synchronization failed; durable state may need retry: {error:#}");
+                            }
+                        } else if request_type == "goal.complete" {
+                            if let Some(purge) = purge {
+                                purge();
+                            }
+                        }
+                        if request_type == "goal.wait" {
+                            track_goal_wait(telemetry.as_ref(), "paused");
+                        }
+                        host_ok(&response)
+                    })
+                }),
+            );
+        }
         let store = self.cron_store.clone();
         let active_session_id = self.active_session_id.clone();
         let binding_session_id = self.binding.session_id.clone();
@@ -212,6 +234,22 @@ impl SessionRuntime {
     }
 }
 
+fn track_goal_wait(
+    telemetry: Option<&(
+        pa_telemetry::TelemetryClient,
+        Option<super::telemetry::RecordingSwitch>,
+    )>,
+    outcome: &str,
+) {
+    if let Some((client, switch)) = telemetry {
+        if switch.as_ref().is_none_or(|switch| (switch.enabled)()) {
+            let mut properties = pa_telemetry::Properties::new();
+            properties.set("outcome", Value::from(outcome));
+            client.track("goal_wait", properties);
+        }
+    }
+}
+
 fn host_ok(response: &GoalHostResponse) -> anyhow::Result<Value> {
     serde_json::to_value(response).map_err(anyhow::Error::new)
 }
@@ -238,6 +276,112 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn goal_wait_registry_awaits_withdrawal_after_persistence() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut manager = SessionManager::in_memory(dir.path());
+        manager.materialize_session_file(Some(dir.path().join("session")));
+        let session = Arc::new(Mutex::new(manager));
+        let mut runtime = SessionRuntime::new(
+            &*session.lock().await,
+            Arc::new(AgentCronJobStore::new(dir.path().join("jobs.json"))),
+            "live-1".to_string(),
+            SessionBinding {
+                session_id: "session-1".to_string(),
+                session_file: dir.path().join("session.jsonl").display().to_string(),
+                cwd: dir.path().display().to_string(),
+            },
+        );
+        let called = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let sink = called.clone();
+        let persisted = session.clone();
+        runtime.set_goal_state_change_hook(Arc::new(move || {
+            let sink = sink.clone();
+            let persisted = persisted.clone();
+            Box::pin(async move {
+                let persisted_state = GoalDriver::load_persisted(&*persisted.lock().await);
+                assert!(matches!(
+                    persisted_state.state().status,
+                    crate::goals::GoalStatus::Active | crate::goals::GoalStatus::Paused
+                ));
+                sink.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(())
+            })
+        }));
+        let mut handlers = HostRequestHandlers::default();
+        runtime.register_host_handlers(&session, &mut handlers);
+        let create = handlers.get("goal.create").unwrap().clone();
+        create(payload(serde_json::json!({"objective": "ship it"})))
+            .await
+            .unwrap();
+        assert_eq!(called.swap(0, std::sync::atomic::Ordering::SeqCst), 1);
+        let wait = handlers.get("goal.wait").unwrap().clone();
+        assert!(wait(payload(serde_json::json!({"reason": " "})))
+            .await
+            .is_err());
+        assert_eq!(called.load(std::sync::atomic::Ordering::SeqCst), 0);
+        let response = wait(payload(serde_json::json!({"reason": "approval"})))
+            .await
+            .unwrap();
+        assert_eq!(response["goal"]["status"], "paused");
+        assert_eq!(called.load(std::sync::atomic::Ordering::SeqCst), 1);
+        let paused = runtime.goal_driver().lock().await.state().clone();
+        wait(payload(serde_json::json!({"reason": "different"})))
+            .await
+            .unwrap();
+        assert_eq!(runtime.goal_driver().lock().await.state(), &paused);
+        assert_eq!(called.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn goal_wait_withdrawal_failure_keeps_durable_pause_for_retry() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut manager = SessionManager::in_memory(dir.path());
+        manager.materialize_session_file(Some(dir.path().join("session")));
+        let session = Arc::new(Mutex::new(manager));
+        let mut runtime = SessionRuntime::new(
+            &*session.lock().await,
+            Arc::new(AgentCronJobStore::new(dir.path().join("jobs.json"))),
+            "live-1".to_string(),
+            SessionBinding {
+                session_id: "session-1".to_string(),
+                session_file: dir.path().join("session.jsonl").display().to_string(),
+                cwd: dir.path().display().to_string(),
+            },
+        );
+        runtime
+            .goal_driver()
+            .lock()
+            .await
+            .start(&mut *session.lock().await, "ship it", None)
+            .unwrap();
+        runtime.set_goal_state_change_hook(Arc::new(|| {
+            Box::pin(async { anyhow::bail!("checkpoint unavailable") })
+        }));
+        let mut handlers = HostRequestHandlers::default();
+        runtime.register_host_handlers(&session, &mut handlers);
+        let wait = handlers.get("goal.wait").unwrap().clone();
+        let error = wait(payload(serde_json::json!({"reason": "approval"})))
+            .await
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("goal state changed in memory, but ownership synchronization failed"));
+        let paused = runtime.goal_driver().lock().await.state().clone();
+        assert_eq!(paused.status, crate::goals::GoalStatus::Paused);
+        assert_eq!(
+            GoalDriver::load_persisted(&*session.lock().await).state(),
+            &paused
+        );
+        runtime.set_goal_state_change_hook(Arc::new(|| Box::pin(async { Ok(()) })));
+        let mut handlers = HostRequestHandlers::default();
+        runtime.register_host_handlers(&session, &mut handlers);
+        handlers.get("goal.wait").unwrap()(payload(serde_json::json!({"reason": "different"})))
+            .await
+            .unwrap();
+        assert_eq!(runtime.goal_driver().lock().await.state(), &paused);
+    }
+
+    #[tokio::test]
     async fn goal_handlers_round_trip_through_the_registry() {
         let session = Arc::new(Mutex::new(persisted_session()));
         let dir = tempfile::TempDir::new().unwrap();
@@ -252,7 +396,7 @@ mod tests {
             },
         );
         let mut handlers = HostRequestHandlers::default();
-        runtime.register_host_handlers(session.clone(), &mut handlers);
+        runtime.register_host_handlers(&session, &mut handlers);
 
         let create = handlers.get("goal.create").unwrap().clone();
         let response = create(payload(serde_json::json!({
@@ -306,7 +450,7 @@ mod tests {
             },
         );
         let mut handlers = HostRequestHandlers::default();
-        runtime.register_host_handlers(session, &mut handlers);
+        runtime.register_host_handlers(&session, &mut handlers);
 
         let create = handlers.get("rlm_heartbeat.create").unwrap().clone();
         let response = create(payload(serde_json::json!({
@@ -358,7 +502,7 @@ mod tests {
             })
         }));
         let mut handlers = HostRequestHandlers::default();
-        runtime.register_host_handlers(session, &mut handlers);
+        runtime.register_host_handlers(&session, &mut handlers);
 
         // Create announces the job (never withdrawing a queued fire).
         let create = handlers.get("rlm_heartbeat.create").unwrap().clone();

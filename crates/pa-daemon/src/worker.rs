@@ -25,11 +25,12 @@ pub use queue::Lane;
 pub use queue::QueuePriority;
 pub(crate) use queue::{
     admit_autonomous_follow_up, admit_bash_completion_notice, admit_goal_follow_up,
-    checkpoint_queue_recovery, enqueue_priority, gather_delivery_batch, parse_custom_message,
-    parse_prompt_images, queue_lanes, restore_queue_snapshot, restored_turn_policy,
-    withdraw_bash_completion_notice, QueueCheckpoint, QueueLanes, QueuedItem, TurnPolicy,
-    TurnSettle, ABORTED_TURN_SETTLE_ERROR, PROMPT_ABORTED_BEFORE_DELIVERY, QUEUED_INPUT_SUSPENDED,
-    QUEUED_PROMPT_DELETED, SIDE_QUESTION_SETTLE_TIMEOUT,
+    admit_post_compaction_goal, checkpoint_queue_recovery, checkpoint_queue_recovery_checked,
+    enqueue_priority, gather_delivery_batch, parse_custom_message, parse_prompt_images,
+    queue_lanes, restore_queue_snapshot, restored_turn_policy, withdraw_bash_completion_notice,
+    QueueCheckpoint, QueueLanes, QueuedItem, TurnPolicy, TurnSettle, ABORTED_TURN_SETTLE_ERROR,
+    PROMPT_ABORTED_BEFORE_DELIVERY, QUEUED_INPUT_SUSPENDED, QUEUED_PROMPT_DELETED,
+    SIDE_QUESTION_SETTLE_TIMEOUT,
 };
 
 mod create;
@@ -313,6 +314,7 @@ impl Worker {
             scoped_models: Vec::new(),
             retry_abort_requested: false,
             queued_input_suspended: false,
+            goal_queue_state: None,
             pending_next_turn: Vec::new(),
             active_action: None,
             running_tool_calls: std::collections::HashSet::new(),
@@ -507,13 +509,32 @@ impl Worker {
                             item.pending_handle.clone()
                         }
                     };
-                    admit_goal_follow_up(
-                        &sink_recovery,
-                        &sink_core,
-                        &sink_events,
-                        &sink_notify,
-                        work,
-                    );
+                    if let Some(engine) = sink_engine.upgrade() {
+                        let handles = engine
+                            .goal_runtime
+                            .lock()
+                            .expect("goal runtime lock")
+                            .clone();
+                        if let Some(handles) = handles {
+                            engine.runtime.block_on(async {
+                                let driver = handles.driver.lock().await;
+                                {
+                                    let mut core = sink_core.lock().unwrap();
+                                    crate::goal_queue::synchronize(
+                                        &mut core,
+                                        Some(driver.state_with_creation_elapsed()),
+                                    );
+                                }
+                                admit_goal_follow_up(
+                                    &sink_recovery,
+                                    &sink_core,
+                                    &sink_events,
+                                    &sink_notify,
+                                    work,
+                                );
+                            });
+                        }
+                    }
                     if sink_engine.upgrade().is_none() {
                         return;
                     }
@@ -541,6 +562,44 @@ impl Worker {
                         },
                     );
                 });
+                let hook_engine = Arc::downgrade(concrete);
+                let hook_core = Arc::clone(&core);
+                let hook_recovery = Arc::clone(&recovery);
+                *concrete
+                    .goal_state_change_hook
+                    .lock()
+                    .expect("goal change hook lock") = Some(Arc::new(move || {
+                    let weak = hook_engine.clone();
+                    let core = hook_core.clone();
+                    let recovery = hook_recovery.clone();
+                    Box::pin(async move {
+                        let engine = weak
+                            .upgrade()
+                            .ok_or_else(|| anyhow!("Goal engine no longer exists"))?;
+                        let handles = engine
+                            .goal_runtime
+                            .lock()
+                            .expect("goal runtime lock")
+                            .clone()
+                            .ok_or_else(|| anyhow!("Goal runtime is not available"))?;
+                        // Driver -> admission lock matches mint/probe order. No std guard crosses await.
+                        {
+                            let driver = handles.driver.lock().await;
+                            let state = driver.state_with_creation_elapsed();
+                            let mut core = core.lock().unwrap();
+                            // Ownership linearizes before I/O; failure reports uncertainty, never success.
+                            crate::goal_queue::commit_worker_state(&mut core, &state)?;
+                        }
+                        engine.cancel_goal_backoff_wake();
+                        checkpoint_queue_recovery_checked(
+                            &recovery,
+                            &core,
+                            QueueCheckpoint::Settle {
+                                operation: "queue_purged",
+                            },
+                        )
+                    })
+                }));
                 concrete.set_goal_admission(probe, sink, queue_purge);
                 let late_core = Arc::clone(&core);
                 let late_events = Arc::clone(&events);

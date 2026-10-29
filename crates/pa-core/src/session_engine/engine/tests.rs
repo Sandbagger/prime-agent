@@ -86,6 +86,7 @@ async fn engine_runs_tool_loop_and_persists() {
         on_background_work_settled: None,
         prewarm_ipython_kernel: None,
         queued_goal_context_purge: None,
+        goal_state_change_hook: None,
     })
     .await
     .unwrap();
@@ -185,6 +186,7 @@ async fn spawned_child_prompt_stamps_its_depth() {
         on_background_work_settled: None,
         prewarm_ipython_kernel: None,
         queued_goal_context_purge: None,
+        goal_state_change_hook: None,
     })
     .await
     .unwrap();
@@ -252,6 +254,7 @@ async fn oauth_creds_unlock_generic_mcp_gating_in_new_sessions() {
             on_background_work_settled: None,
             prewarm_ipython_kernel: None,
             queued_goal_context_purge: None,
+            goal_state_change_hook: None,
         }
     }
 

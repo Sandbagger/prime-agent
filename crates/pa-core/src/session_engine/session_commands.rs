@@ -331,11 +331,7 @@ async fn execute_goal(
         let mut cleared_goal = false;
         match goal {
             GoalCommand::Status => {}
-            // TS `_clearGoal`/`_pauseGoal`/`_startGoal` route through
-            // `_clearQueuedGoalContexts` first: a minted continuation
-            // waiting in the queue never runs behind the state change.
             GoalCommand::Clear => {
-                engine.purge_queued_goal_contexts();
                 cleared_goal =
                     driver.state().objective.is_some() && driver.state().status != GoalStatus::Idle;
                 driver
@@ -343,7 +339,6 @@ async fn execute_goal(
                     .map_err(|error| format!("{error:#}"))?;
             }
             GoalCommand::Pause => {
-                engine.purge_queued_goal_contexts();
                 driver
                     .pause(&mut session, "Paused by user")
                     .map_err(|error| format!("{error:#}"))?;
@@ -357,7 +352,6 @@ async fn execute_goal(
                 objective,
                 token_budget,
             } => {
-                engine.purge_queued_goal_contexts();
                 let state = driver
                     .start(&mut session, &objective, token_budget)
                     .map_err(|error| format!("{error:#}"))?;
@@ -380,6 +374,13 @@ async fn execute_goal(
             None,
             true,
         ));
+    }
+    if goal_choice != "status" {
+        if let Some(hook) = &engine.goal_state_change_hook {
+            hook().await.map_err(|error| format!("goal state changed in memory, but ownership synchronization failed; durable state may need retry: {error:#}"))?;
+        } else if matches!(goal_choice, "clear" | "pause" | "create") {
+            engine.purge_queued_goal_contexts();
+        }
     }
     // The goal-context row becomes the turn's primary record (an
     // injected custom row), never an early durable row — the loop

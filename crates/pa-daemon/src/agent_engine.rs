@@ -130,6 +130,8 @@ pub struct AgentSessionEngine {
     pub(crate) goal_admission_sink: std::sync::Mutex<Option<crate::engine::GoalAdmissionSink>>,
     /// The queued-goal-context purge (TS `_clearQueuedGoalContexts`):
     /// invoked by pause/clear/start and `goal.complete`.
+    pub(crate) goal_state_change_hook:
+        std::sync::Mutex<Option<pa_core::session_engine::runtime::GoalStateChangeHook>>,
     pub(crate) goal_queue_purge: std::sync::Mutex<Option<std::sync::Arc<dyn Fn() + Send + Sync>>>,
     /// The armed backoff wake's cron job id: `Some` while a one-shot
     /// `goal-backoff-wake` is pending (cancelled by a successful mint).

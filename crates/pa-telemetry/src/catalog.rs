@@ -1095,6 +1095,18 @@ const TUI_EXIT: EventRule = EventRule {
 
 /// `update completed` plus the per-phase events (one per status
 /// transition, the same names the `phase` property carries).
+const GOAL_WAIT: EventRule = EventRule {
+    name: "goal_wait",
+    since: 2,
+    properties: &[(
+        "outcome",
+        required(enum_rule(
+            &["paused", "withdrawal_failed"],
+            "withdrawal_failed",
+        )),
+    )],
+};
+
 const UPDATE_EVENTS: &[EventRule] = &[
     EventRule {
         name: "update completed",
@@ -1223,6 +1235,7 @@ const UPDATE_EVENTS: &[EventRule] = &[
 #[must_use]
 pub fn catalog() -> Vec<&'static EventRule> {
     let mut all: Vec<&'static EventRule> = vec![
+        &GOAL_WAIT,
         &AGENT_STARTED,
         &AGENT_RUN_COMPLETED,
         &AGENT_SESSION_ENDED,
@@ -1351,6 +1364,18 @@ fn cap_string(value: &str, max: usize) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn goal_wait_adoption_drops_reason_content() {
+        let mut properties = Properties::new();
+        properties.set("outcome", json!("paused"));
+        properties.set("reason", json!("private approval detail"));
+        sanitize("goal_wait", &mut properties);
+        assert_eq!(
+            serde_json::to_value(properties).unwrap(),
+            json!({"outcome": "paused"})
+        );
+    }
 
     #[test]
     fn the_catalog_is_the_low_frequency_set() {

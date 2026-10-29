@@ -133,6 +133,8 @@ impl SessionEngine for AgentSessionEngine {
             // This mint's own guard handle: the admission sink releases
             // exactly it, never the mirror.
             let pending_handle = Some(driver.pending_continuation_handle());
+            let queue_key =
+                crate::goal_queue::provenance_key(&driver.state_with_creation_elapsed());
             let goal_update = self.publish_goal_state(&driver.state_with_creation_elapsed());
             drop(driver);
             self.cancel_goal_backoff_wake();
@@ -147,13 +149,15 @@ impl SessionEngine for AgentSessionEngine {
                 },
                 goal_update,
                 pending_handle,
+                queue_key,
             ))
         })?;
-        let (request, goal_update, pending_handle) = continuation;
+        let (request, goal_update, pending_handle, queue_key) = continuation;
         Some(crate::engine::GoalContinuation {
             request,
             goal_update,
             pending_handle,
+            queue_key,
         })
     }
 

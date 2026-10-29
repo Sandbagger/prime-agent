@@ -418,6 +418,7 @@ impl AgentSessionEngine {
                     // A synthetic admission, not a minted continuation: no pending guard.
                     goal_update: None,
                     pending_handle: None,
+                    queue_key: None,
                 },
             ));
         }

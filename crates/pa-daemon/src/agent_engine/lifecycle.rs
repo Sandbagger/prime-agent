@@ -138,6 +138,7 @@ impl AgentSessionEngine {
             bash_completion_sink: std::sync::Mutex::new(None),
             bash_consumed_sink: std::sync::Mutex::new(None),
             goal_queue_purge: std::sync::Mutex::new(None),
+            goal_state_change_hook: std::sync::Mutex::new(None),
             goal_backoff_wake_job_id: std::sync::Mutex::new(None),
             stale_goal_terminal_pending: std::sync::Mutex::new(None),
             turn_agent: std::sync::Mutex::new(None),
@@ -947,6 +948,11 @@ impl AgentSessionEngine {
             .lock()
             .expect("late agent message sink lock")
             .clone();
+        let goal_state_change_hook = self
+            .goal_state_change_hook
+            .lock()
+            .expect("goal change hook lock")
+            .clone();
         let engine = pa_core::session_engine::engine::create_session_with_tool_policy(
             SessionEngineConfig {
                 on_late_sent_agent_message,
@@ -983,6 +989,7 @@ impl AgentSessionEngine {
                 on_background_work_settled,
                 // The worker-installed purge withdraws queued minted continuations.
                 queued_goal_context_purge,
+                goal_state_change_hook,
                 // The steering lane owns the stop hooks (a queued steer cuts the next turn).
                 queued_steering_probe: self.config.queued_steering_probe.clone(),
                 // Seeded from settings at create; the live switch updates the slot ahead of any later

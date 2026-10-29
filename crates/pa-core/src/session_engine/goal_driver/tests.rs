@@ -947,6 +947,7 @@ fn restore_persisted_adopts_the_state_without_rewriting_it() {
         active: true,
         status: GoalStatus::Active,
         goal_id: Some("goal-1".to_string()),
+        continuation_epoch: None,
         objective: Some("ship the port".to_string()),
         token_budget: Some(1000),
         tokens_used: 340,
@@ -1372,4 +1373,179 @@ fn pending_continuation_never_re_arms() {
         .is_some());
     driver.clear(&mut session).unwrap();
     assert!(!driver.pending_continuation());
+}
+
+#[test]
+fn operator_wait_persists_and_preserves_manual_pause() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let mut session = SessionManager::in_memory(dir.path());
+    session.materialize_session_file(Some(dir.path().join("session")));
+    let mut driver = GoalDriver::new();
+    driver.start(&mut session, "ship it", None).unwrap();
+    driver.mark_continuation_pending();
+    driver.wait(&mut session, "  approve deployment  ").unwrap();
+    let paused = driver.state().clone();
+    assert_eq!(
+        paused,
+        GoalState {
+            active: false,
+            status: GoalStatus::Paused,
+            last_reason: Some("Waiting for operator: approve deployment".to_string()),
+            ..paused.clone()
+        }
+    );
+    assert!(!driver.pending_continuation());
+    assert_eq!(GoalDriver::load_persisted(&session).state(), &paused);
+    driver.reload_from_branch(&session, GoalBranchReload::SameTimeline);
+    assert_eq!(driver.state(), &paused);
+    assert!(driver
+        .next_continuation_message(&mut session, None)
+        .unwrap()
+        .is_none());
+    assert_eq!(driver.state(), &paused);
+    driver.wait(&mut session, "different reason").unwrap();
+    assert_eq!(driver.state(), &paused);
+    driver.resume(&mut session).unwrap();
+    driver.pause(&mut session, "Paused by user").unwrap();
+    let manual = driver.state().clone();
+    driver.wait(&mut session, "agent reason").unwrap();
+    assert_eq!(driver.state(), &manual);
+}
+
+#[test]
+fn operator_wait_validates_reason_and_rejects_nonpending_goals() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let mut session = SessionManager::in_memory(dir.path());
+    session.materialize_session_file(Some(dir.path().join("session")));
+    let mut driver = GoalDriver::new();
+    assert!(driver.wait(&mut session, "approval").is_err());
+    driver.start(&mut session, "ship it", None).unwrap();
+    let active = driver.state().clone();
+    for reason in ["".to_string(), "  ".to_string(), "x".repeat(2001)] {
+        assert!(driver.wait(&mut session, &reason).is_err());
+        assert_eq!(driver.state(), &active);
+    }
+    driver.wait(&mut session, &"é".repeat(2000)).unwrap();
+    driver.complete(&mut session).unwrap();
+    let complete = driver.state().clone();
+    assert!(driver.wait(&mut session, "approval").is_err());
+    assert_eq!(driver.state(), &complete);
+}
+
+#[test]
+fn operator_wait_failed_persist_keeps_live_continuation_debt() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let session_dir = dir.path().join("session");
+    let mut session = SessionManager::in_memory(dir.path());
+    session.materialize_session_file(Some(session_dir.clone()));
+    let mut driver = GoalDriver::new();
+    driver.start(&mut session, "ship it", None).unwrap();
+    driver.mark_continuation_pending();
+    driver.owed_continuation_for_rlm_work = true;
+    let active = driver.state().clone();
+    std::fs::remove_dir_all(&session_dir).unwrap();
+    std::fs::write(&session_dir, "not a directory").unwrap();
+    assert!(driver.wait(&mut session, "approval").is_err());
+    assert_eq!(driver.state(), &active);
+    assert!(driver.pending_continuation());
+    assert!(driver.owed_continuation_for_rlm_work);
+    std::fs::remove_file(&session_dir).unwrap();
+    std::fs::create_dir_all(&session_dir).unwrap();
+    session.append_custom_entry("unrelated", None).unwrap();
+    session.flush_now().unwrap();
+    assert_eq!(GoalDriver::load_persisted(&session).state(), &active);
+}
+
+#[test]
+fn operator_wait_epoch_changes_only_on_ownership_transition() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let mut session = SessionManager::in_memory(dir.path());
+    session.materialize_session_file(Some(dir.path().join("session")));
+    let mut driver = GoalDriver::new();
+    driver.start(&mut session, "ship it", None).unwrap();
+    let active_epoch = driver.state().continuation_epoch.clone();
+    let recovered = GoalDriver::load_persisted(&session);
+    assert_eq!(recovered.state().continuation_epoch, active_epoch);
+    driver.wait(&mut session, "approval").unwrap();
+    assert_ne!(driver.state().continuation_epoch, active_epoch);
+    let paused = driver.state().clone();
+    driver.wait(&mut session, "again").unwrap();
+    assert_eq!(driver.state(), &paused);
+    driver.resume(&mut session).unwrap();
+    assert_ne!(driver.state().continuation_epoch, active_epoch);
+    assert_ne!(driver.state().continuation_epoch, paused.continuation_epoch);
+    let epoch = driver.state().continuation_epoch.clone();
+    driver
+        .record_assistant_usage(&mut session, "turn", &usage(1, 2))
+        .unwrap();
+    assert_eq!(driver.state().continuation_epoch, epoch);
+    let legacy: GoalState = serde_json::from_value(serde_json::json!({"active": true, "status": "active", "goalId": "old", "objective": "legacy"})).unwrap();
+    assert_eq!(legacy.continuation_epoch, None);
+    assert_eq!(
+        GoalDriver::restore_persisted(legacy.clone()).state(),
+        &legacy
+    );
+}
+
+#[tokio::test]
+async fn operator_wait_windowed_transition_retains_history_and_reloads() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("session.jsonl");
+    let state = GoalState {
+        active: true,
+        status: GoalStatus::Active,
+        goal_id: Some("owned-goal".to_string()),
+        objective: Some("ship it".to_string()),
+        ..empty_goal_state()
+    };
+    let rows = [
+        serde_json::json!({"type":"session","version":3,"id":"s","cwd":dir.path(),"timestamp":"2026-01-01T00:00:00Z"}),
+        serde_json::json!({"type":"custom","id":"goal","parentId":null,"customType":GOAL_STATE_CUSTOM_TYPE,"data":state}),
+        serde_json::json!({"type":"message","id":"old","parentId":"goal","message":{"role":"user","content":"old history","timestamp":0}}),
+        serde_json::json!({"type":"message","id":"kept","parentId":"old","message":{"role":"user","content":"retained","timestamp":0}}),
+        serde_json::json!({"type":"compaction","id":"compact","parentId":"kept","summary":"summary","firstKeptEntryId":"kept","tokensBefore":1000}),
+    ];
+    let original = rows
+        .iter()
+        .map(|row| format!("{row}\n"))
+        .collect::<String>();
+    std::fs::write(&path, &original).unwrap();
+    // This test owns the private file exclusively for the full operation.
+    let mut session = SessionManager::open_windowed(dir.path(), dir.path(), &path)
+        .await
+        .unwrap();
+    assert!(!session.is_full_history());
+    let mut driver = GoalDriver::load_persisted(&session);
+    driver.wait(&mut session, "approval").unwrap();
+    let paused = driver.state().clone();
+    assert!(!session.is_full_history());
+    assert!(std::fs::read_to_string(&path)
+        .unwrap()
+        .starts_with(&original));
+    let reopened = SessionManager::open_windowed(dir.path(), dir.path(), &path)
+        .await
+        .unwrap();
+    assert_eq!(GoalDriver::load_persisted(&reopened).state(), &paused);
+}
+
+#[test]
+fn operator_wait_preserves_unflushed_custom_rows() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let mut session = SessionManager::in_memory(dir.path());
+    let path = session.materialize_session_file(Some(dir.path().join("session")));
+    let mut driver = GoalDriver::new();
+    driver.start(&mut session, "ship it", None).unwrap();
+    session
+        .append_custom_entry(
+            "unrelated_buffered",
+            Some(serde_json::json!({"keep": true})),
+        )
+        .unwrap();
+    driver.wait(&mut session, "approval").unwrap();
+    let bytes = std::fs::read_to_string(path).unwrap();
+    assert!(bytes.lines().any(
+        |line| serde_json::from_str::<serde_json::Value>(line).unwrap()["customType"]
+            == "unrelated_buffered"
+    ));
+    assert_eq!(GoalDriver::load_persisted(&session).state(), driver.state());
 }

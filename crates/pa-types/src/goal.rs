@@ -1,6 +1,7 @@
 //! Thread-goal wire state, carried to every attached surface by the `goal_update` session event and
 //! the attach snapshot's `state.goal` field; the goal engine lives in pa-core. Field shape is the
-//! TS `GoalState` (camelCase, optional keys omitted).
+//! TS `GoalState` (camelCase, optional keys omitted), plus the proposed native
+//! continuationEpoch ownership generation; see docs/goal-wait-contract.md.
 
 use serde::{Deserialize, Serialize};
 
@@ -41,6 +42,9 @@ pub struct GoalState {
     pub status: GoalStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub goal_id: Option<String>,
+    /// Durable queue ownership generation; absent on legacy goal rows.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub continuation_epoch: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub objective: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -80,6 +84,7 @@ pub fn empty_goal_state() -> GoalState {
         active: false,
         status: GoalStatus::Idle,
         goal_id: None,
+        continuation_epoch: None,
         objective: None,
         token_budget: None,
         tokens_used: 0,
